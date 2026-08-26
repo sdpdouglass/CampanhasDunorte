@@ -669,6 +669,7 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
         //     (ficam elegíveis, mas vão zerar na comparação com QTDMIN
         //     mais adiante).
         /////////////////////////////////////////////////////////////////////
+        NoConcatenate
         MIXMIN_ELEGIVEL:
         LOAD
             CodRca,
@@ -1430,10 +1431,11 @@ DROP FIELD
     ValorPedidoLiquido, ValorFaturadoLiquido, ValorPedidoLiquidoMix, ValorFaturadoLiquidoMix
 FROM TRF_BASE_RCA_FINAL;
 
+DROP TABLE TRF_BASE_RCA;
+
 RENAME FIELD ValorPedidoLiquidoFinal   TO ValorPedidoLiquido;
 RENAME FIELD ValorFaturadoLiquidoFinal TO ValorFaturadoLiquido;
 
-DROP TABLE TRF_BASE_RCA;
 RENAME TABLE TRF_BASE_RCA_FINAL TO TRF_BASE_RCA;
 
 
