@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "qlik-load-script": {
+      "source": "qlik-oss/agentic-skills",
+      "sourceType": "github",
+      "skillPath": "community/skills/qlik-load-script/SKILL.md",
+      "computedHash": "bbd33639c6146ddbdc79f75567ec2cdca511e2f758dff0a577bb79d0609953dc"
+    }
+  }
+}

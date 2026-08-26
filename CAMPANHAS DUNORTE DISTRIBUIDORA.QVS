@@ -30,6 +30,18 @@ LOAD DISTINCT
 FROM [lib://Carga_Duno/EXTRATOR/CADASTRO/CAD_CLIENTE.QVD] (qvd);
 
 
+///////////////////////////////////////////////////////////////////////////
+// CONSTANTES DE CAMINHO REUTILIZADAS EM VARIOS BLOCOS DO SCRIPT
+// Varios blocos abaixo (Rank Gillette, Mix Minimo, Metas P&G, Premiacao
+// RCA, Devolucao RCA, Devolucao Rank) usam os MESMOS caminhos de origem
+// e destino - centralizados aqui para nao repetir o literal ~10x e
+// reduzir o risco de divergencia se o caminho mudar no futuro. Os
+// blocos de Escolha Certa e Platinum Point usam uma origem diferente
+// (sem "/TESTE/") e por isso mantem seu proprio SET de origem.
+///////////////////////////////////////////////////////////////////////////
+SET vPathMetasPG   = 'lib://4_Plan/Metas P&G/';
+SET vPathCampanhas = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathVendasMes = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
 
 LET vAno      = Year(Today());
 LET vMesAtual = Num(Month(Today()), '00');
@@ -81,8 +93,8 @@ DROP TABLE [TRF_BASE_RCA_INDICADORES_$(vAno)_$(vMesAtual)];
 // e salvas em 2 QVDs - por ora só extração, sem cálculo de premiação
 // ainda (isso fica para quando formos calcular o Gillette Trimestral).
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemRank  = 'lib://4_Plan/Metas P&G/';
-SET vPathDestinoRank = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigemRank  = '$(vPathMetasPG)';
+SET vPathDestinoRank = '$(vPathCampanhas)';
 
 LET vAnoRank    = Year(Today());
 LET vMesTxtRank = Num(Month(Today()), '00');
@@ -152,8 +164,8 @@ ENDIF
 ///////////////////////////////////////////////////////////////////////////
 // 1. CONFIGURAÇÃO E VARIÁVEIS
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigem  = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
-SET vPathDestino = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigem  = '$(vPathVendasMes)';
+SET vPathDestino = '$(vPathCampanhas)';
 
 LET vAno       = Year(Today());
 LET vMesAtual  = Month(Today());
@@ -281,8 +293,8 @@ ENDIF
 ///////////////////////////////////////////////////////////////////////////
 // 1. CONFIGURAÇÃO E VARIÁVEIS
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigem  = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
-SET vPathDestino = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigem  = '$(vPathVendasMes)';
+SET vPathDestino = '$(vPathCampanhas)';
 
 LET vAno      = Year(Today());
 LET vMesAtual = Num(Month(Today()), '00');
@@ -548,8 +560,8 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
     //    Precisa rodar AQUI, antes do DROP TABLE TMP_VENDAS logo abaixo,
     //    porque usa os dados de produto/quantidade ainda em memória.
     /////////////////////////////////////////////////////////////////////////
-    SET vPathOrigemMix  = 'lib://4_Plan/Metas P&G/';
-    SET vPathDestinoMix = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+    SET vPathOrigemMix  = '$(vPathMetasPG)';
+    SET vPathDestinoMix = '$(vPathCampanhas)';
 
     LET vAnoMix    = Year(Today());
     LET vMesTxtMix = Num(Month(Today()), '00');
@@ -583,7 +595,10 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
 
         TRACE QVD de MIX_MIN gerado com sucesso: $(vPathDestinoMix)$(vNomeArquivoMixMin);
 
-        DROP TABLE TRF_MIX_MIN;
+        // TRF_MIX_MIN permanece residente (sem DROP aqui) e e reaproveitada
+        // direto na secao 7.4 (MIXMIN_ELEGIVEL) - otimizacao: evita gravar
+        // o QVD e reler o mesmo arquivo do disco logo em seguida so para
+        // reduzir colunas (round-trip de I/O desnecessario).
 
 
         /////////////////////////////////////////////////////////////////////
@@ -612,53 +627,26 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
         (ooxml, embedded labels, table is MIXMIN_GRUPO_PRODUTO)
         WHERE Not IsNull(QTDMIN);
 
-        CONCATENATE (TRF_MIXMIN_PRODUTO_GRUPO)
-        LOAD
-            CodGrupo,
-            NomeGrupo,
-            Categoria,
-            QtdMin
-        RESIDENT TRF_MIXMIN_GRUPO;
+        // QVD combinado (entregavel) montado numa tabela a parte
+        // (MIXMIN_GRUPO_PRODUTO_QVD), so para o STORE. TRF_MIXMIN_PRODUTO_GRUPO
+        // e TRF_MIXMIN_GRUPO permanecem residentes (sem DROP) e sao
+        // reaproveitadas direto nas secoes 7.4/7.5 abaixo.
+        // Otimizacao: elimina a antiga secao 7.3, que gravava este QVD e
+        // imediatamente relia o mesmo arquivo do disco so para separar de
+        // volta em duas tabelas (round-trip de I/O desnecessario - os
+        // dados ja estavam em memoria).
+        MIXMIN_GRUPO_PRODUTO_QVD:
+        NoConcatenate
+        LOAD * RESIDENT TRF_MIXMIN_PRODUTO_GRUPO;
 
-        STORE TRF_MIXMIN_PRODUTO_GRUPO INTO [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)] (qvd);
+        CONCATENATE (MIXMIN_GRUPO_PRODUTO_QVD)
+        LOAD * RESIDENT TRF_MIXMIN_GRUPO;
+
+        STORE MIXMIN_GRUPO_PRODUTO_QVD INTO [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)] (qvd);
 
         TRACE QVD de MIXMIN_GRUPO_PRODUTO gerado com sucesso: $(vPathDestinoMix)$(vNomeArquivoMixGrupo);
 
-        DROP TABLE TRF_MIXMIN_PRODUTO_GRUPO;
-        DROP TABLE TRF_MIXMIN_GRUPO;
-
-
-        /////////////////////////////////////////////////////////////////////
-        // 7.3 RECARREGA OS DOIS QVDs SEPARADOS (produto->grupo e
-        //     grupo->qtdmin), reconstituídos a partir do QVD combinado
-        //     gerado acima.
-        /////////////////////////////////////////////////////////////////////
-        TRF_MIXMIN_PRODUTO_GRUPO:
-        LOAD
-            CodProduto,
-            CodGrupo
-        FROM [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)]
-        (qvd)
-        WHERE Not IsNull(CodProduto);
-
-        TRF_MIXMIN_GRUPO:
-        LOAD
-            CodGrupo,
-            NomeGrupo,
-            Categoria,
-            QtdMin
-        FROM [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)]
-        (qvd)
-        WHERE Not IsNull(QtdMin);
-
-        TRF_MIX_MIN:
-        LOAD
-            CodRca,
-            CodClientePrincipal,
-            Categoria,
-            Objetivo
-        FROM [$(vPathDestinoMix)$(vNomeArquivoMixMin)]
-        (qvd);
+        DROP TABLE MIXMIN_GRUPO_PRODUTO_QVD;
 
 
         /////////////////////////////////////////////////////////////////////
@@ -833,8 +821,8 @@ ENDIF
 ///////////////////////////////////////////////////////////////////////////
 // 5. TRANSFORMAÇÃO ESCOLHA CERTA - MÊS ATUAL
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemEscolhaCerta  = 'lib://Carga_Duno/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
-SET vPathDestinoEscolhaCerta = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigemEscolhaCerta  = 'lib://Carga_Duno/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';  // origem diferente (sem "/TESTE/") - propositalmente nao aliasada
+SET vPathDestinoEscolhaCerta = '$(vPathCampanhas)';
 
 LET vArquivoEscolhaCerta     = '$(vPathOrigemEscolhaCerta)ESCOLHA_CERTA_COMERCIAL_$(vAno)_$(vMesAtual).QVD';
 LET vNomeArquivoEscolhaCerta = 'TRF_ESCOLHA_CERTA_$(vAno)_$(vMesAtual).QVD';
@@ -889,8 +877,8 @@ ENDIF
 ///////////////////////////////////////////////////////////////////////////
 // 6. TRANSFORMAÇÃO PLATINUM POINT - MÊS ATUAL
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemPlatinumPoint  = 'lib://Carga_Duno/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
-SET vPathDestinoPlatinumPoint = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigemPlatinumPoint  = 'lib://Carga_Duno/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';  // origem diferente (sem "/TESTE/") - propositalmente nao aliasada
+SET vPathDestinoPlatinumPoint = '$(vPathCampanhas)';
 
 LET vArquivoPlatinumPoint     = '$(vPathOrigemPlatinumPoint)PLATINUM_POINT_COMERCIAL_$(vAno)_$(vMesAtual).QVD';
 LET vNomeArquivoPlatinumPoint = 'TRF_PLATINUM_POINT_$(vAno)_$(vMesAtual).QVD';
@@ -952,8 +940,8 @@ ENDIF
 ///////////////////////////////////////////////////////////////////////////
 // 1. CONFIGURAÇÃO E VARIÁVEIS
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigem  = 'lib://4_Plan/Metas P&G/';
-SET vPathDestino = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigem  = '$(vPathMetasPG)';
+SET vPathDestino = '$(vPathCampanhas)';
 
 LET vAno      = Year(Today());
 LET vMesNum   = Month(Today());
@@ -1452,11 +1440,18 @@ DROP TABLE TRF_BASE_RCA;
 
 /*//////////////////////////////////////////////////////////////////////////
     1. BASE DE INDICADORES (bruto)
-       ValorPedidoLiquido/ValorFaturadoLiquido/ValorDevolucao chegam como
-       TEXTO com vírgula decimal (ex: '74928,42') e '-' para ausência de
-       valor. Conversão explícita aqui: '-' vira 0, vírgula vira ponto
-       antes de transformar em número - sem isso, Sum() pode falhar ou
-       ignorar essas linhas silenciosamente.
+       CORRIGIDO: o comentário original desta seção afirmava haver uma
+       "conversão explícita" de texto com vírgula decimal ('-'->0,
+       ','->'.') antes do Sum(), mas essa conversão não existe em nenhum
+       ponto deste script. ValorPedidoLiquido/ValorFaturadoLiquido/
+       ValorDevolucao chegam aqui já numéricos - foram produzidos por
+       Sum() nas seções anteriores deste mesmo script (ver
+       BASE_RCA_INDICADORES_REALIZADO acima) e persistidos em QVD, que
+       preserva o tipo numérico. Nenhuma conversão é necessária aqui.
+       // TODO: verify - se BASE_RCA_REAL_SECAO_DEP_MES_$(vDataCarg) algum
+       // dia passar a ser alimentado por outro processo (ex: fonte texto
+       // com vírgula decimal), reintroduzir a conversão explícita antes
+       // do Sum() em BASE_RCA_INDICADORES_REALIZADO.
 //////////////////////////////////////////////////////////////////////////*/
 TEMP_BASE_INDICADORES:
 LOAD
@@ -1567,8 +1562,8 @@ DROP TABLE TEMP_BASE_INDICADORES;
 // mensal. GILLETTE TRIMESTRAL é excluído aqui de propósito - será
 // calculado à parte, com regra própria de trimestre.
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemPrem  = 'lib://4_Plan/Metas P&G/';
-SET vPathDestinoPrem = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigemPrem  = '$(vPathMetasPG)';
+SET vPathDestinoPrem = '$(vPathCampanhas)';
 
 LET vAnoPrem    = Year(Today());
 LET vMesTxtPrem = Num(Month(Today()), '00');
@@ -1654,8 +1649,8 @@ RENAME TABLE BASE_RCA_INDICADORES_REALIZADO_GANHO TO BASE_RCA_INDICADORES_REALIZ
 // Extrai a aba RCA_DEVOL (4 faixas de % devolução + % de repasse do
 // ganho por faixa, específicas de cada RCA) e salva um QVD mensal.
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemDevol  = 'lib://4_Plan/Metas P&G/';
-SET vPathDestinoDevol = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigemDevol  = '$(vPathMetasPG)';
+SET vPathDestinoDevol = '$(vPathCampanhas)';
 
 LET vAnoDevol    = Year(Today());
 LET vMesTxtDevol = Num(Month(Today()), '00');
@@ -1811,8 +1806,8 @@ DROP TABLE TEMP_GANHOS_RCA;
 // ranking do Gillette Trimestral. Colunas D/E da planilha são só texto
 // descritivo (nome do RCA, nome do Supervisor) - não carregadas aqui.
 ///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemDevolRank  = 'lib://4_Plan/Metas P&G/';
-SET vPathDestinoDevolRank = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+SET vPathOrigemDevolRank  = '$(vPathMetasPG)';
+SET vPathDestinoDevolRank = '$(vPathCampanhas)';
 
 LET vAnoDevolRank    = Year(Today());
 LET vMesTxtDevolRank = Num(Month(Today()), '00');
