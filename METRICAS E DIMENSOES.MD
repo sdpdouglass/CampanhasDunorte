@@ -17,3 +17,13 @@
 - Cod Cobrança
 
 ## Metricas
+- Faturamento Liquido
+- Pedido Liquido
+- Valor Devolucao
+- Margem
+- Qtd Clientes Positivados
+- Meta Indicador
+- Realizado Indicador
+- Perc Realizado
+- Premiação
+- Total Premiação

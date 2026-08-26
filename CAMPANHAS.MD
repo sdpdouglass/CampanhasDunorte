@@ -64,4 +64,3 @@
 - Cada positivação com P&G (Departamento 3) no mes paga 20 reais
 - Paga apenas para o RCA
 - Mostrar a lista de cliente positvados por vendedor
-
