@@ -1,0 +1,2004 @@
+//1. SECAO MAPPING
+MAP_SUP:
+MAPPING
+LOAD DISTINCT
+    CODIGOSUPERVISOR,
+    NOMESUPERVISOR
+FROM [lib://Carga_Duno/EXTRATOR/CADASTRO/CAD_RCA.QVD] (qvd);
+
+
+MAP_RCA_NOME:
+MAPPING
+LOAD DISTINCT
+    CODIGORCA,
+    NOMERCA
+FROM [lib://Carga_Duno/EXTRATOR/CADASTRO/CAD_RCA.QVD] (qvd);
+
+
+MAP_RCA_SUP:
+MAPPING
+LOAD DISTINCT
+    CODIGORCA,
+    CODIGOSUPERVISOR
+FROM [lib://Carga_Duno/EXTRATOR/CADASTRO/CAD_RCA.QVD] (qvd);
+
+MAP_CLIENTE_PRINC:
+MAPPING
+LOAD DISTINCT 
+    CODIGOCLIENTE,
+    CODIGOCLIENTEPRINCIPAL 
+FROM [lib://Carga_Duno/EXTRATOR/CADASTRO/CAD_CLIENTE.QVD] (qvd);
+
+
+
+LET vAno      = Year(Today());
+LET vMesAtual = Num(Month(Today()), '00');
+
+BASE_RCA_INDICADORES:
+LOAD
+    DATA,
+    COD_RCA,
+    INDICADOR
+    
+FROM [lib://4_Plan/Metas P&G/CAMPANHAS_$(vAno)_$(vMesAtual).xlsx]
+(ooxml, embedded labels, table is PREM_RCA);
+
+
+LEFT JOIN (BASE_RCA_INDICADORES)
+BASE_INDICADORES:
+LOAD
+    INDICADOR,
+    CODIGO,
+    TIPO,
+    CLASSE,
+    PERIODO
+FROM [lib://4_Plan/Metas P&G/CAMPANHAS_$(vAno)_$(vMesAtual).xlsx]
+(ooxml, embedded labels, table is INDICADORES);
+
+NoConcatenate
+[TRF_BASE_RCA_INDICADORES_$(vAno)_$(vMesAtual)]:
+LOAD 
+	DATA,
+    COD_RCA		as CodRca,
+	INDICADOR	as Indicador,
+    CODIGO		as Codigo,
+    TIPO		as TipoIndicador,
+    CLASSE		as ClasseIndicador,
+    PERIODO     as PeriodoIndicador
+RESIDENT BASE_RCA_INDICADORES;
+
+DROP TABLE BASE_RCA_INDICADORES;
+
+STORE [TRF_BASE_RCA_INDICADORES_$(vAno)_$(vMesAtual)] INTO  [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_BASE_RCA_INDICADORES_$(vAno)_$(vMesAtual).QVD](qvd);
+DROP TABLE [TRF_BASE_RCA_INDICADORES_$(vAno)_$(vMesAtual)];
+
+
+///////////////////////////////////////////////////////////////////////////
+// TRANSFORMADOR PREM_RANK_GILLETE (planilha CAMPANHAS)
+// A aba tem 2 tabelas lógicas lado a lado, separadas por colunas em
+// branco: (A-C) ranking de prêmio por posição dentro de um grupo, e
+// (F-G) qual grupo cada supervisor pertence. Carregadas separadamente
+// e salvas em 2 QVDs - por ora só extração, sem cálculo de premiação
+// ainda (isso fica para quando formos calcular o Gillette Trimestral).
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemRank  = 'lib://4_Plan/Metas P&G/';
+SET vPathDestinoRank = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vAnoRank    = Year(Today());
+LET vMesTxtRank = Num(Month(Today()), '00');
+
+LET vArquivoRank            = '$(vPathOrigemRank)CAMPANHAS_$(vAnoRank)_$(vMesTxtRank).xlsx';
+LET vNomeArquivoPremRank     = 'TRF_PREM_RANK_GILLETTE_$(vAnoRank)_$(vMesTxtRank).qvd';
+LET vNomeArquivoSupGrupo     = 'TRF_SUP_GRUPO_GILLETTE_$(vAnoRank)_$(vMesTxtRank).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoRank)')) THEN
+
+    TRACE Carregando PREM_RANK_GILLETE $(vMesTxtRank)/$(vAnoRank)...;
+
+    /////////////////////////////////////////////////////////////////////////
+    // 1. RANKING DE PRÊMIO POR GRUPO (colunas A-C)
+    /////////////////////////////////////////////////////////////////////////
+    TRF_PREM_RANK_GILLETTE:
+    LOAD
+        GRUPO_RANK AS GrupoRank,
+        POSICAO    AS Posicao,
+        PREMIO     AS Premio
+    FROM [$(vArquivoRank)]
+    (ooxml, embedded labels, table is PREM_RANK_GILLETE)
+    WHERE Not IsNull(GRUPO_RANK);
+
+    STORE TRF_PREM_RANK_GILLETTE INTO [$(vPathDestinoRank)$(vNomeArquivoPremRank)] (qvd);
+
+    TRACE QVD de Ranking Premio Gillette gerado com sucesso: $(vPathDestinoRank)$(vNomeArquivoPremRank);
+
+    DROP TABLE TRF_PREM_RANK_GILLETTE;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 2. SUPERVISOR -> GRUPO DE RANKING (colunas F-G)
+    //    WHERE remove as linhas "fantasma" - grupos com menos supervisores
+    //    do que linhas de ranking deixam COD_SUP/GRUPO_SUP em branco nas
+    //    linhas excedentes da planilha.
+    /////////////////////////////////////////////////////////////////////////
+    TRF_SUP_GRUPO_GILLETTE:
+    LOAD
+        COD_SUP   AS CodSupervisor,
+        GRUPO_SUP AS GrupoRank
+    FROM [$(vArquivoRank)]
+    (ooxml, embedded labels, table is PREM_RANK_GILLETE)
+    WHERE Not IsNull(COD_SUP);
+
+    STORE TRF_SUP_GRUPO_GILLETTE INTO [$(vPathDestinoRank)$(vNomeArquivoSupGrupo)] (qvd);
+
+    TRACE QVD de Supervisor-Grupo Gillette gerado com sucesso: $(vPathDestinoRank)$(vNomeArquivoSupGrupo);
+
+    DROP TABLE TRF_SUP_GRUPO_GILLETTE;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtRank)/$(vAnoRank) ainda nao disponivel ($(vArquivoRank)). QVDs de Ranking Gillette nao foram gerados.;
+
+ENDIF
+
+///////////////////////////////////////////////////////////////////////////
+// GERAÇÃO DE QVDs TRIMESTRAIS - FATO VENDAS POR SEÇÃO e POR DEPARTAMENTO
+// Consolida os 3 meses do trimestre ATUAL (calculado a partir de hoje)
+// em DOIS QVDs agregados: um por Cod RCA / Cod Secao, outro por
+// Cod RCA / Cod Departamento. A extração mensal é feita uma única vez
+// e reaproveitada para as duas agregações.
+///////////////////////////////////////////////////////////////////////////
+
+
+///////////////////////////////////////////////////////////////////////////
+// 1. CONFIGURAÇÃO E VARIÁVEIS
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigem  = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
+SET vPathDestino = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vAno       = Year(Today());
+LET vMesAtual  = Month(Today());
+LET vTrimestre = Ceil(vMesAtual / 3);
+LET vMesIni    = (vTrimestre - 1) * 3 + 1;   // ex: T3 -> 7
+LET vMesFim    = vMesIni + 2;                 // ex: T3 -> 9
+
+// Nomes dos QVDs finais
+LET vNomeArquivoSecao       = 'FATO_VENDAS_SECAO_TRIMESTRE_FIXO_$(vAno)_T$(vTrimestre).qvd';
+LET vNomeArquivoDepartamento = 'FATO_VENDAS_DEPARTAMENTO_TRIMESTRE_FIXO_$(vAno)_T$(vTrimestre).qvd';
+
+TRACE ==============================================;
+TRACE Gerando QVDs do Trimestre T$(vTrimestre)/$(vAno) - meses $(vMesIni) a $(vMesFim);
+TRACE ==============================================;
+
+
+///////////////////////////////////////////////////////////////////////////
+// 2. EXTRAÇÃO BRUTA DOS MESES DISPONÍVEIS (sem agregar ainda)
+//    Carrega os campos necessários para AMBAS as agregações de uma vez -
+//    evita ler o mesmo QVD de origem duas vezes.
+//    Antes de cada LOAD, verifica se o QVD do mês já existe com FileSize().
+//    Se não existir (ex: mês ainda não fechou), pula e segue com os
+//    meses já disponíveis do trimestre - sem quebrar o script.
+///////////////////////////////////////////////////////////////////////////
+LET vMesesCarregados = '';   // guarda quais meses entraram, só para log final
+LET vQtdMesesCarregados = 0; // guarda de segurança para a etapa de agregação
+
+FOR vMes = vMesIni to vMesFim
+
+    LET vMesTxt = Num(vMes, '00');
+    LET vArquivoMes = '$(vPathOrigem)COMERCIAL_TRATADO_$(vAno)_$(vMesTxt).QVD';
+
+    IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
+
+        TRACE Carregando mes $(vMesTxt)/$(vAno)...;
+
+        TMP_VENDAS:
+        LOAD
+            "Cod RCA",
+            "Cod Secao",
+            "Cod Departamento",
+            "Vlr Venda Liquida",
+            "Vlr Tot Faturado Liquido Venda",
+            "Vlr  Devol"
+        FROM [$(vArquivoMes)]
+        (qvd);
+
+        LET vMesesCarregados = '$(vMesesCarregados)' & '$(vMesTxt) ';
+        LET vQtdMesesCarregados = vQtdMesesCarregados + 1;
+
+    ELSE
+
+        TRACE >>> Mes $(vMesTxt)/$(vAno) ainda nao disponivel - ignorado ($(vArquivoMes));
+
+    ENDIF
+
+NEXT vMes
+
+TRACE Meses efetivamente carregados no trimestre: $(vMesesCarregados);
+
+
+///////////////////////////////////////////////////////////////////////////
+// 3. AGREGAÇÃO + GERAÇÃO DO QVD POR SEÇÃO
+//    Importante: agregar só depois de concatenar evita linhas duplicadas
+//    para a mesma combinação RCA/Seção que aparece em mais de um mês.
+//    Só executa se pelo menos 1 mês do trimestre foi carregado com sucesso.
+///////////////////////////////////////////////////////////////////////////
+IF vQtdMesesCarregados > 0 THEN
+
+    FATO_VENDAS_TRIMESTRE_FIXO_SECAO:
+    LOAD
+        "Cod RCA",
+        "Cod Secao",
+        'SECAO'								  AS TipoIndicador,
+        'TRIMESTRE FIXO'                      AS PeriodoIndicador,
+        'FATURAMENTO'						  AS ClasseIndicador,
+        Sum("Vlr Venda Liquida")              AS ValorPedidoLiquido,
+        Sum("Vlr Tot Faturado Liquido Venda") AS ValorFaturadoLiquido,
+        Sum("Vlr  Devol")                     AS ValorDevolucao
+    RESIDENT TMP_VENDAS
+    GROUP BY
+        "Cod RCA",
+        "Cod Secao";
+
+    STORE FATO_VENDAS_TRIMESTRE_FIXO_SECAO INTO [$(vPathDestino)$(vNomeArquivoSecao)] (qvd);
+
+    TRACE QVD de Secao gerado com sucesso: $(vPathDestino)$(vNomeArquivoSecao);
+
+    DROP TABLE FATO_VENDAS_TRIMESTRE_FIXO_SECAO;
+
+
+    ///////////////////////////////////////////////////////////////////////
+    // 4. AGREGAÇÃO + GERAÇÃO DO QVD POR DEPARTAMENTO
+    //    Mesma tabela temporária (TMP_VENDAS), só muda a dimensão de
+    //    agrupamento - evita reler os QVDs mensais de novo.
+    ///////////////////////////////////////////////////////////////////////
+    FATO_VENDAS_TRIMESTRE_FIXO_DEPARTAMENTO:
+    LOAD
+        "Cod RCA",
+        "Cod Departamento",
+        'DEPARTAMENTO'						  AS TipoIndicador,
+        'TRIMESTRE FIXO'                      AS PeriodoIndicador,
+        'FATURAMENTO'						  AS ClasseIndicador,
+        Sum("Vlr Venda Liquida")              AS ValorPedidoLiquido,
+        Sum("Vlr Tot Faturado Liquido Venda") AS ValorFaturadoLiquido,
+        Sum("Vlr  Devol")                     AS ValorDevolucao
+    RESIDENT TMP_VENDAS
+    GROUP BY
+        "Cod RCA",
+        "Cod Departamento";
+
+    STORE FATO_VENDAS_TRIMESTRE_FIXO_DEPARTAMENTO INTO [$(vPathDestino)$(vNomeArquivoDepartamento)] (qvd);
+
+    TRACE QVD de Departamento gerado com sucesso: $(vPathDestino)$(vNomeArquivoDepartamento);
+
+    DROP TABLE FATO_VENDAS_TRIMESTRE_FIXO_DEPARTAMENTO;
+    DROP TABLE TMP_VENDAS;
+
+ELSE
+
+    TRACE >>> ATENCAO: nenhum mes do trimestre T$(vTrimestre)/$(vAno) disponivel ainda. QVDs nao foram gerados.;
+
+ENDIF
+
+///////////////////////////////////////////////////////////////////////////
+// 1. CONFIGURAÇÃO E VARIÁVEIS
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigem  = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
+SET vPathDestino = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vAno      = Year(Today());
+LET vMesAtual = Num(Month(Today()), '00');
+
+LET vArquivoMes = '$(vPathOrigem)COMERCIAL_TRATADO_$(vAno)_$(vMesAtual).QVD';
+
+// Nomes dos QVDs finais
+LET vNomeArquivoSecao        = 'FATO_VENDAS_SECAO_MES_$(vAno)_$(vMesAtual).qvd';
+LET vNomeArquivoDepartamento = 'FATO_VENDAS_DEPARTAMENTO_MES_$(vAno)_$(vMesAtual).qvd';
+
+LET vNomeArquivoPositivacaoSecao        = 'FATO_POSITIVACAO_SECAO_MES_$(vAno)_$(vMesAtual).qvd';
+LET vNomeArquivoPositivacaoDepartamento = 'FATO_POSITIVACAO_DEPARTAMENTO_MES_$(vAno)_$(vMesAtual).qvd';
+
+LET vNomeArquivoDevolucaoRca = 'FATO_DEVOLUCAO_RCA_MES_$(vAno)_$(vMesAtual).qvd';
+LET vNomeArquivoFaturamentoRca = 'FATO_FATURAMENTO_RCA_MES_$(vAno)_$(vMesAtual).qvd';
+
+TRACE ==============================================;
+TRACE Gerando QVDs do mes $(vMesAtual)/$(vAno);
+TRACE ==============================================;
+
+
+///////////////////////////////////////////////////////////////////////////
+// 2. EXTRAÇÃO BRUTA DO MÊS (sem agregar ainda)
+//    Carrega os campos necessários para AMBAS as agregações de uma vez -
+//    evita ler o mesmo QVD de origem duas vezes.
+//    Verifica se o QVD do mês já existe com FileSize() antes de carregar.
+//    Se ainda não existir (mês em aberto/não processado), avisa e não
+//    gera os QVDs de saída.
+///////////////////////////////////////////////////////////////////////////
+IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
+
+    TRACE Carregando mes $(vMesAtual)/$(vAno)...;
+
+    TMP_VENDAS:
+    LOAD
+        "Cod RCA",
+        "Cod Cliente",
+        ApplyMap('MAP_CLIENTE_PRINC',"Cod Cliente",'#ND') as "Cod Cliente Principal",
+        "Cod Secao",
+        "Cod Departamento",
+        "Cod Produto",
+
+    	"Qtd Vendida"					as QtdPedido,
+    	"Qtd Vendida Liquida"			as QtdPedidoLiquido,
+    	"Qtd Caixa"						as QtdCaixaPedido,
+    	"Qtd Caixa Pedido Liquida"		as QtdCaixaPedidoLiquido,
+
+    	"Qtd Faturada"					as QtdFaturado,
+    	"Qtd Faturada Liquida"			as QtdFaturadoLiquido,
+    	"Qtd Caixa Venda"				as QtdCaixaFaturado,
+    	"Qtd Caixa Faturado Liquida" 	as QtdCaixaFaturadoLiquido,
+
+        "Vlr Tot Pedido",
+        "Vlr Tot Faturado Venda",
+
+        "Vlr Venda Liquida",
+        "Vlr Tot Faturado Liquido Venda",
+        "Vlr  Devol"
+    FROM [$(vArquivoMes)]
+    (qvd);
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 3. AGREGAÇÃO + GERAÇÃO DO QVD POR SEÇÃO
+    /////////////////////////////////////////////////////////////////////////
+    FATO_VENDAS_SECAO:
+    LOAD
+        "Cod RCA",
+        "Cod Secao",
+        'SECAO'								  AS TipoIndicador,
+        'MESATUAL'                            AS PeriodoIndicador,
+        'FATURAMENTO'						  AS ClasseIndicador,
+        Sum("Vlr Venda Liquida")              AS ValorPedidoLiquido,
+        Sum("Vlr Tot Faturado Liquido Venda") AS ValorFaturadoLiquido,
+        Sum("Vlr  Devol")                     AS ValorDevolucao
+    RESIDENT TMP_VENDAS
+    GROUP BY
+        "Cod RCA",
+        "Cod Secao";
+
+    STORE FATO_VENDAS_SECAO INTO [$(vPathDestino)$(vNomeArquivoSecao)] (qvd);
+
+    TRACE QVD de Secao gerado com sucesso: $(vPathDestino)$(vNomeArquivoSecao);
+
+    DROP TABLE FATO_VENDAS_SECAO;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 4. AGREGAÇÃO + GERAÇÃO DO QVD POR DEPARTAMENTO
+    //    Mesma tabela temporária (TMP_VENDAS), só muda a dimensão de
+    //    agrupamento - evita reler o QVD mensal de novo.
+    /////////////////////////////////////////////////////////////////////////
+    FATO_VENDAS_DEPARTAMENTO:
+    LOAD
+        "Cod RCA",
+        "Cod Departamento",
+        'DEPARTAMENTO'						  AS TipoIndicador,
+        'MESATUAL'                            AS PeriodoIndicador,
+        'FATURAMENTO'						  AS ClasseIndicador,
+        Sum("Vlr Venda Liquida")              AS ValorPedidoLiquido,
+        Sum("Vlr Tot Faturado Liquido Venda") AS ValorFaturadoLiquido,
+        Sum("Vlr  Devol")                     AS ValorDevolucao
+    RESIDENT TMP_VENDAS
+    GROUP BY
+        "Cod RCA",
+        "Cod Departamento";
+
+    STORE FATO_VENDAS_DEPARTAMENTO INTO [$(vPathDestino)$(vNomeArquivoDepartamento)] (qvd);
+
+    TRACE QVD de Departamento gerado com sucesso: $(vPathDestino)$(vNomeArquivoDepartamento);
+
+    DROP TABLE FATO_VENDAS_DEPARTAMENTO;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 4.1 DEVOLUÇÃO POR RCA (sem quebra por Seção/Departamento)
+    //     Indicador agregado só por Cod RCA - reaproveita a mesma
+    //     TMP_VENDAS. TipoIndicador='RCA' é um tipo novo, para indicadores
+    //     que não têm quebra por Seção/Departamento (ainda não existe uma
+    //     linha correspondente em TRF_BASE_RCA_INDICADORES - por ora só
+    //     gera o QVD).
+    /////////////////////////////////////////////////////////////////////////
+    FATO_DEVOLUCAO_RCA:
+    LOAD
+        "Cod RCA",
+        'RCA'					AS TipoIndicador,
+        'MESATUAL'              AS PeriodoIndicador,
+        'DEVOLUCAO'				AS ClasseIndicador,
+        Sum("Vlr  Devol")      AS ValorDevolucao
+    RESIDENT TMP_VENDAS
+    GROUP BY
+        "Cod RCA";
+
+    STORE FATO_DEVOLUCAO_RCA INTO [$(vPathDestino)$(vNomeArquivoDevolucaoRca)] (qvd);
+
+    TRACE QVD de Devolucao por RCA gerado com sucesso: $(vPathDestino)$(vNomeArquivoDevolucaoRca);
+
+    DROP TABLE FATO_DEVOLUCAO_RCA;
+
+
+        /////////////////////////////////////////////////////////////////////////
+    // 4.2 FATURAMENTO E PEDIDO POR RCA (sem quebra por Seção/Departamento)
+    //     Indicador agregado só por Cod RCA - reaproveita a mesma
+    //     TMP_VENDAS. TipoIndicador='RCA' é um tipo novo, para indicadores
+    //     que não têm quebra por Seção/Departamento (ainda não existe uma
+    //     linha correspondente em TRF_BASE_RCA_INDICADORES - por ora só
+    //     gera o QVD).
+    /////////////////////////////////////////////////////////////////////////
+    FATO_FATURAMENTO_RCA:
+    LOAD
+        "Cod RCA",
+        'RCA'					AS TipoIndicador,
+        'MESATUAL'              AS PeriodoIndicador,
+        'FATURAMENTO'			AS ClasseIndicador,
+        Sum("Vlr Tot Pedido")         AS ValorPedido,
+        Sum("Vlr Tot Faturado Venda") AS ValorFaturado
+    RESIDENT TMP_VENDAS
+    GROUP BY
+        "Cod RCA";
+
+    STORE FATO_FATURAMENTO_RCA INTO [$(vPathDestino)$(vNomeArquivoFaturamentoRca)] (qvd);
+
+    TRACE QVD de Faturamento por RCA gerado com sucesso: $(vPathDestino)$(vNomeArquivoFaturamentoRca);
+
+    DROP TABLE FATO_FATURAMENTO_RCA;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 5. POSITIVAÇÃO DE CLIENTES POR SEÇÃO
+    //    Regra: por Cliente dentro de cada RCA+Seção, soma o pedido e o
+    //    faturado do mês. Se o total do cliente for > 0, ele conta como
+    //    "positivado" naquela métrica. O flag já nasce agregado por
+    //    cliente (If aplicado sobre o Sum, num único passe) e depois é
+    //    somado de novo removendo Cliente, chegando no nível RCA+Seção.
+    /////////////////////////////////////////////////////////////////////////
+    CLIENTE_SECAO_TEMP:
+    LOAD
+        "Cod RCA",
+        "Cod Secao",
+        "Cod Cliente",
+        If(Sum("Vlr Venda Liquida") > 0, 1, 0)              AS FlagPositivadoPedido,
+        If(Sum("Vlr Tot Faturado Liquido Venda") > 0, 1, 0) AS FlagPositivadoFaturado
+    RESIDENT TMP_VENDAS
+    GROUP BY
+        "Cod RCA",
+        "Cod Secao",
+        "Cod Cliente";
+
+	NoConcatenate
+    FATO_POSITIVACAO_SECAO:
+    LOAD
+        "Cod RCA",
+        "Cod Secao",
+        'SECAO'								  AS TipoIndicador,
+        'MESATUAL'                            AS PeriodoIndicador,
+        'POSITIVACAO'						  AS ClasseIndicador,
+        Sum(FlagPositivadoPedido)     AS QtdClientesPositivadosPedido,
+        Sum(FlagPositivadoFaturado)   AS QtdClientesPositivadosFaturado
+    RESIDENT CLIENTE_SECAO_TEMP
+    GROUP BY
+        "Cod RCA",
+        "Cod Secao";
+
+    DROP TABLE CLIENTE_SECAO_TEMP;
+
+    STORE FATO_POSITIVACAO_SECAO INTO [$(vPathDestino)$(vNomeArquivoPositivacaoSecao)] (qvd);
+
+    TRACE QVD de Positivacao por Secao gerado com sucesso: $(vPathDestino)$(vNomeArquivoPositivacaoSecao);
+
+    DROP TABLE FATO_POSITIVACAO_SECAO;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 6. POSITIVAÇÃO DE CLIENTES POR DEPARTAMENTO
+    //    Mesma lógica da seção 5, só troca Secao por Departamento como
+    //    dimensão de quebra.
+    /////////////////////////////////////////////////////////////////////////
+    CLIENTE_DEPARTAMENTO_TEMP:
+    LOAD
+        "Cod RCA",
+        "Cod Departamento",
+        "Cod Cliente",
+        If(Sum("Vlr Venda Liquida") > 0, 1, 0)              AS FlagPositivadoPedido,
+        If(Sum("Vlr Tot Faturado Liquido Venda") > 0, 1, 0) AS FlagPositivadoFaturado
+    RESIDENT TMP_VENDAS
+    GROUP BY
+        "Cod RCA",
+        "Cod Departamento",
+        "Cod Cliente";
+
+	NoConcatenate
+    FATO_POSITIVACAO_DEPARTAMENTO:
+    LOAD
+        "Cod RCA",
+        "Cod Departamento",
+        'DEPARTAMENTO'				  AS TipoIndicador,
+        'MESATUAL'                    AS PeriodoIndicador,
+        'POSITIVACAO'				  AS ClasseIndicador,
+        Sum(FlagPositivadoPedido)     AS QtdClientesPositivadosPedido,
+        Sum(FlagPositivadoFaturado)   AS QtdClientesPositivadosFaturado
+    RESIDENT CLIENTE_DEPARTAMENTO_TEMP
+    GROUP BY
+        "Cod RCA",
+        "Cod Departamento";
+
+    DROP TABLE CLIENTE_DEPARTAMENTO_TEMP;
+
+    STORE FATO_POSITIVACAO_DEPARTAMENTO INTO [$(vPathDestino)$(vNomeArquivoPositivacaoDepartamento)] (qvd);
+
+    TRACE QVD de Positivacao por Departamento gerado com sucesso: $(vPathDestino)$(vNomeArquivoPositivacaoDepartamento);
+
+    DROP TABLE FATO_POSITIVACAO_DEPARTAMENTO;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 7. INDICADOR MIX MINIMO
+    //    Cada Cliente Principal (aba MIX_MIN da planilha CAMPANHAS) precisa
+    //    "positivar" um número mínimo de grupos de produto (OBJETIVO)
+    //    dentro da sua CATEGORIA. Um grupo é positivado se a quantidade
+    //    comprada dos produtos daquele grupo (aba MIXMIN_GRUPO_PRODUTO)
+    //    atingir QTDMIN. O RCA só ganha o prêmio se TODOS os seus Clientes
+    //    Principais baterem seus próprios objetivos (regra tudo ou nada).
+    //    Precisa rodar AQUI, antes do DROP TABLE TMP_VENDAS logo abaixo,
+    //    porque usa os dados de produto/quantidade ainda em memória.
+    /////////////////////////////////////////////////////////////////////////
+    SET vPathOrigemMix  = 'lib://4_Plan/Metas P&G/';
+    SET vPathDestinoMix = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+    LET vAnoMix    = Year(Today());
+    LET vMesTxtMix = Num(Month(Today()), '00');
+
+    LET vArquivoMix          = '$(vPathOrigemMix)CAMPANHAS_$(vAnoMix)_$(vMesTxtMix).xlsx';
+    LET vNomeArquivoMixMin   = 'TRF_MIX_MIN_$(vAnoMix)_$(vMesTxtMix).qvd';
+    LET vNomeArquivoMixGrupo = 'TRF_MIXMIN_GRUPO_PRODUTO_$(vAnoMix)_$(vMesTxtMix).qvd';
+
+    IF Not IsNull(FileSize('$(vArquivoMix)')) THEN
+
+        TRACE Carregando MIX_MIN e MIXMIN_GRUPO_PRODUTO $(vMesTxtMix)/$(vAnoMix)...;
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.1 TRANSFORMADOR - MIX_MIN (Cliente Principal x Objetivo)
+        /////////////////////////////////////////////////////////////////////
+        TRF_MIX_MIN:
+        LOAD
+            Date(MonthStart(DATA)) AS DATA,
+            COD_SUP                AS CodSupervisor,
+            COD_RCA                AS CodRca,
+            CODCLIPRINC             AS CodClientePrincipal,
+            CLASSE                  AS Classe,
+            RAMO                     AS Ramo,
+            CATEGORIA                AS Categoria,
+            OBJETIVO                  AS Objetivo
+        FROM [$(vArquivoMix)]
+        (ooxml, embedded labels, table is MIX_MIN)
+        WHERE Not IsNull(COD_RCA);
+
+        STORE TRF_MIX_MIN INTO [$(vPathDestinoMix)$(vNomeArquivoMixMin)] (qvd);
+
+        TRACE QVD de MIX_MIN gerado com sucesso: $(vPathDestinoMix)$(vNomeArquivoMixMin);
+
+        DROP TABLE TRF_MIX_MIN;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.2 MIXMIN_GRUPO_PRODUTO
+        //     Colunas F/G da planilha ("NOMEGRUPO" duplicado) são só um
+        //     resíduo/rascunho da planilha, sem relação com a linha - não
+        //     carregadas. QTDMIN só vem preenchido na primeira linha de
+        //     cada grupo (efeito de célula mesclada na origem) - por isso
+        //     carregamos bruto (produto->grupo, todas as linhas) e
+        //     separado grupo->QTDMIN (só as linhas onde QTDMIN existe).
+        /////////////////////////////////////////////////////////////////////
+        TRF_MIXMIN_PRODUTO_GRUPO:
+        LOAD
+            CODPROD    AS CodProduto,
+            COD_GRUPO  AS CodGrupo
+        FROM [$(vArquivoMix)]
+        (ooxml, embedded labels, table is MIXMIN_GRUPO_PRODUTO);
+
+        TRF_MIXMIN_GRUPO:
+        LOAD
+            COD_GRUPO  AS CodGrupo,
+            NOMEGRUPO  AS NomeGrupo,
+            CATEGORIA  AS Categoria,
+            QTDMIN     AS QtdMin
+        FROM [$(vArquivoMix)]
+        (ooxml, embedded labels, table is MIXMIN_GRUPO_PRODUTO)
+        WHERE Not IsNull(QTDMIN);
+
+        CONCATENATE (TRF_MIXMIN_PRODUTO_GRUPO)
+        LOAD
+            CodGrupo,
+            NomeGrupo,
+            Categoria,
+            QtdMin
+        RESIDENT TRF_MIXMIN_GRUPO;
+
+        STORE TRF_MIXMIN_PRODUTO_GRUPO INTO [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)] (qvd);
+
+        TRACE QVD de MIXMIN_GRUPO_PRODUTO gerado com sucesso: $(vPathDestinoMix)$(vNomeArquivoMixGrupo);
+
+        DROP TABLE TRF_MIXMIN_PRODUTO_GRUPO;
+        DROP TABLE TRF_MIXMIN_GRUPO;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.3 RECARREGA OS DOIS QVDs SEPARADOS (produto->grupo e
+        //     grupo->qtdmin), reconstituídos a partir do QVD combinado
+        //     gerado acima.
+        /////////////////////////////////////////////////////////////////////
+        TRF_MIXMIN_PRODUTO_GRUPO:
+        LOAD
+            CodProduto,
+            CodGrupo
+        FROM [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)]
+        (qvd)
+        WHERE Not IsNull(CodProduto);
+
+        TRF_MIXMIN_GRUPO:
+        LOAD
+            CodGrupo,
+            NomeGrupo,
+            Categoria,
+            QtdMin
+        FROM [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)]
+        (qvd)
+        WHERE Not IsNull(QtdMin);
+
+        TRF_MIX_MIN:
+        LOAD
+            CodRca,
+            CodClientePrincipal,
+            Categoria,
+            Objetivo
+        FROM [$(vPathDestinoMix)$(vNomeArquivoMixMin)]
+        (qvd);
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.4 CONJUNTO ELEGÍVEL (Cliente x Grupo da mesma Categoria)
+        //     JOIN comum por "Categoria" produz o cruzamento completo:
+        //     cada cliente pareado com TODOS os grupos da sua própria
+        //     categoria - inclusive grupos que ele não comprou nada
+        //     (ficam elegíveis, mas vão zerar na comparação com QTDMIN
+        //     mais adiante).
+        /////////////////////////////////////////////////////////////////////
+        MIXMIN_ELEGIVEL:
+        LOAD
+            CodRca,
+            CodClientePrincipal,
+            Categoria,
+            Objetivo
+        RESIDENT TRF_MIX_MIN;
+
+        JOIN (MIXMIN_ELEGIVEL)
+        LOAD
+            Categoria,
+            CodGrupo,
+            QtdMin
+        RESIDENT TRF_MIXMIN_GRUPO;
+
+        DROP TABLE TRF_MIX_MIN;
+        DROP TABLE TRF_MIXMIN_GRUPO;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.5 QUANTIDADE REALMENTE COMPRADA POR CLIENTE + GRUPO
+        //     Filtra TMP_VENDAS só para produtos que pertencem a algum
+        //     grupo do Mix Minimo e só para Clientes Principais que estão
+        //     no MIX_MIN - depois soma por Cliente+Grupo. Só soma a
+        //     quantidade se o valor correspondente for > 0 - evita contar
+        //     linhas com valor zerado/negativo (ex: estorno, ajuste) como
+        //     se fossem compra de verdade.
+        /////////////////////////////////////////////////////////////////////
+        TEMP_VENDAS_MIXMIN:
+        LOAD
+            "Cod Cliente Principal",
+            "Cod Produto",
+            QtdPedidoLiquido,
+            QtdFaturadoLiquido,
+            "Vlr Venda Liquida",
+            "Vlr Tot Faturado Liquido Venda"
+        RESIDENT TMP_VENDAS
+        WHERE Exists(CodProduto, "Cod Produto")
+          AND Exists(CodClientePrincipal, "Cod Cliente Principal");
+
+        LEFT JOIN (TEMP_VENDAS_MIXMIN)
+        LOAD
+            CodProduto,
+            CodGrupo
+        RESIDENT TRF_MIXMIN_PRODUTO_GRUPO;
+
+        DROP TABLE TRF_MIXMIN_PRODUTO_GRUPO;
+
+        COMPRA_CLIENTE_GRUPO:
+        LOAD
+            "Cod Cliente Principal" AS CodClientePrincipal,
+            CodGrupo,
+            Sum(If("Vlr Venda Liquida" > 0, QtdPedidoLiquido))                AS QtdPedidaGrupo,
+            Sum(If("Vlr Tot Faturado Liquido Venda" > 0, QtdFaturadoLiquido)) AS QtdFaturadaGrupo
+        RESIDENT TEMP_VENDAS_MIXMIN
+        GROUP BY
+            "Cod Cliente Principal",
+            CodGrupo;
+
+        DROP TABLE TEMP_VENDAS_MIXMIN;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.6 POSITIVAÇÃO DO GRUPO (por Cliente)
+        //     LEFT JOIN por CodClientePrincipal + CodGrupo - grupos sem
+        //     nenhuma compra ficam com QtdPedidaGrupo/QtdFaturadaGrupo em
+        //     Null, tratados como 0 com Alt() antes de comparar com QtdMin.
+        /////////////////////////////////////////////////////////////////////
+        LEFT JOIN (MIXMIN_ELEGIVEL)
+        LOAD * RESIDENT COMPRA_CLIENTE_GRUPO;
+
+        DROP TABLE COMPRA_CLIENTE_GRUPO;
+
+        MIXMIN_GRUPO_FLAG:
+        NoConcatenate
+        LOAD
+            *,
+            If(Alt(QtdPedidaGrupo, 0)   >= QtdMin, 1, 0) AS FlagGrupoPositivadoPedido,
+            If(Alt(QtdFaturadaGrupo, 0) >= QtdMin, 1, 0) AS FlagGrupoPositivadoFaturado
+        RESIDENT MIXMIN_ELEGIVEL;
+
+        DROP TABLE MIXMIN_ELEGIVEL;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.7 OBJETIVO ATINGIDO (por Cliente)
+        //     Soma os grupos positivados do cliente e compara com o
+        //     Objetivo dele - resulta em Sim(1)/Não(0), separado para
+        //     Pedido e Faturado.
+        /////////////////////////////////////////////////////////////////////
+        MIXMIN_CLIENTE:
+        LOAD
+            CodRca,
+            CodClientePrincipal,
+            Objetivo,
+            Sum(FlagGrupoPositivadoPedido)   AS GruposPositivadosPedido,
+            Sum(FlagGrupoPositivadoFaturado) AS GruposPositivadosFaturado
+        RESIDENT MIXMIN_GRUPO_FLAG
+        GROUP BY
+            CodRca,
+            CodClientePrincipal,
+            Objetivo;
+
+        DROP TABLE MIXMIN_GRUPO_FLAG;
+
+        MIXMIN_CLIENTE_FLAG:
+        NoConcatenate
+        LOAD
+            *,
+            If(GruposPositivadosPedido   >= Objetivo, 1, 0) AS FlagClienteAtingiuPedido,
+            If(GruposPositivadosFaturado >= Objetivo, 1, 0) AS FlagClienteAtingiuFaturado
+        RESIDENT MIXMIN_CLIENTE;
+
+        DROP TABLE MIXMIN_CLIENTE;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.8 CONSOLIDAÇÃO POR RCA - TUDO OU NADA
+        //     Min() do flag por cliente: se algum cliente do RCA ficou com
+        //     flag 0 (não bateu), o Min vira 0 - só fica 1 (100%) se
+        //     TODOS os clientes do RCA bateram seus próprios objetivos.
+        /////////////////////////////////////////////////////////////////////
+        FATO_MIXMINIMO_RCA:
+        LOAD
+            CodRca,
+            'DEPARTAMENTO'  AS TipoIndicador,
+            'MESATUAL'      AS PeriodoIndicador,
+            'MANUAL'        AS ClasseIndicador,
+            'MIX MINIMO'    AS Indicador,
+            Min(FlagClienteAtingiuPedido)   AS ValorPedidoLiquido,   // já vem como 0 ou 1 (0%/100%)
+            Min(FlagClienteAtingiuFaturado) AS ValorFaturadoLiquido, // já vem como 0 ou 1 (0%/100%)
+            1                                AS Meta                 // Meta fixa = 1 (100%)
+        RESIDENT MIXMIN_CLIENTE_FLAG
+        GROUP BY
+            CodRca;
+
+        DROP TABLE MIXMIN_CLIENTE_FLAG;
+
+        STORE FATO_MIXMINIMO_RCA INTO [$(vPathDestinoMix)FATO_MIXMINIMO_RCA_MES_$(vAnoMix)_$(vMesTxtMix).qvd] (qvd);
+
+        TRACE QVD de Mix Minimo por RCA gerado com sucesso.;
+
+        DROP TABLE FATO_MIXMINIMO_RCA;
+
+    ELSE
+
+        TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtMix)/$(vAnoMix) ainda nao disponivel ($(vArquivoMix)). QVDs de Mix Minimo nao foram gerados.;
+
+    ENDIF
+
+
+    DROP TABLE TMP_VENDAS;
+
+ELSE
+
+    TRACE >>> ATENCAO: mes $(vMesAtual)/$(vAno) ainda nao disponivel ($(vArquivoMes)). QVDs nao foram gerados.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// 5. TRANSFORMAÇÃO ESCOLHA CERTA - MÊS ATUAL
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemEscolhaCerta  = 'lib://Carga_Duno/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
+SET vPathDestinoEscolhaCerta = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vArquivoEscolhaCerta     = '$(vPathOrigemEscolhaCerta)ESCOLHA_CERTA_COMERCIAL_$(vAno)_$(vMesAtual).QVD';
+LET vNomeArquivoEscolhaCerta = 'TRF_ESCOLHA_CERTA_$(vAno)_$(vMesAtual).QVD';
+
+IF Not IsNull(FileSize('$(vArquivoEscolhaCerta)')) THEN
+
+    TRACE Carregando Escolha Certa $(vMesAtual)/$(vAno)...;
+
+    TRF_ESCOLHA_CERTA_TEMP:
+    LOAD
+        KEY_CLIENTE,
+        KEY_RCA,
+        KEY_CALENDARIO,
+
+        IF(TIPO_DADO = 'PEDIDO',   QTD_ESCOLHA_CERTA) AS QTDPEDIDO,
+        IF(TIPO_DADO = 'FATURADO', QTD_ESCOLHA_CERTA) AS QTDFATURADO
+
+    FROM [$(vArquivoEscolhaCerta)]
+    (qvd)
+    WHERE Match(FAIXA_REALIZADA, 2,3,4,5);
+
+    NoConcatenate
+    TRF_ESCOLHA_CERTA:
+    LOAD
+        Date(MonthStart(KEY_CALENDARIO))  as DATA,
+        KEY_RCA         		as [Cod RCA],
+        'FAIXA ESCOLHA CERTA' 	as Indicador,
+        'DEPARTAMENTO'			as TipoIndicador,
+        'MESATUAL'      		as PeriodoIndicador,
+        'KPI'					as ClasseIndicador,
+        Sum(QTDPEDIDO)   		as ValorPedidoLiquido,
+        Sum(QTDFATURADO) 		as ValorFaturadoLiquido
+    RESIDENT TRF_ESCOLHA_CERTA_TEMP
+    GROUP BY
+        Date(MonthStart(KEY_CALENDARIO)),
+        KEY_RCA;
+
+    DROP TABLE TRF_ESCOLHA_CERTA_TEMP;
+
+    STORE TRF_ESCOLHA_CERTA INTO [$(vPathDestinoEscolhaCerta)$(vNomeArquivoEscolhaCerta)] (qvd);
+
+    TRACE QVD Escolha Certa gerado com sucesso: $(vPathDestinoEscolhaCerta)$(vNomeArquivoEscolhaCerta);
+
+    DROP TABLE TRF_ESCOLHA_CERTA;
+
+ELSE
+
+    TRACE >>> ATENCAO: arquivo Escolha Certa $(vMesAtual)/$(vAno) ainda nao disponivel ($(vArquivoEscolhaCerta)). QVD nao foi gerado.;
+
+ENDIF
+
+///////////////////////////////////////////////////////////////////////////
+// 6. TRANSFORMAÇÃO PLATINUM POINT - MÊS ATUAL
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemPlatinumPoint  = 'lib://Carga_Duno/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/';
+SET vPathDestinoPlatinumPoint = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vArquivoPlatinumPoint     = '$(vPathOrigemPlatinumPoint)PLATINUM_POINT_COMERCIAL_$(vAno)_$(vMesAtual).QVD';
+LET vNomeArquivoPlatinumPoint = 'TRF_PLATINUM_POINT_$(vAno)_$(vMesAtual).QVD';
+
+IF Not IsNull(FileSize('$(vArquivoPlatinumPoint)')) THEN
+
+    TRACE Carregando Platinum Point $(vMesAtual)/$(vAno)...;
+
+    TRF_PLATINUM_POINT_TEMP:
+    LOAD
+        KEY_CALENDARIO,
+        KEY_RCA,
+
+        IF(TIPO_DADO = 'PEDIDO',   QTD_PLATINUM_POINT) AS QTDPEDIDO,
+        IF(TIPO_DADO = 'FATURADO', QTD_PLATINUM_POINT) AS QTDFATURADO
+
+    FROM [$(vArquivoPlatinumPoint)]
+    (qvd);
+
+    NoConcatenate
+    TRF_PLATINUM_POINT:
+    LOAD
+        Date(MonthStart(KEY_CALENDARIO))  AS DATA,
+        KEY_RCA         		AS [Cod RCA],
+        'PLATINUM POINTS' 		as Indicador,
+        'DEPARTAMENTO'			as TipoIndicador,
+        'MESATUAL'      		as PeriodoIndicador,
+        'KPI'					as ClasseIndicador,
+        Sum(QTDPEDIDO)   		AS ValorPedidoLiquido,
+        Sum(QTDFATURADO) 		AS ValorFaturadoLiquido
+    RESIDENT TRF_PLATINUM_POINT_TEMP
+    GROUP BY
+        Date(MonthStart(KEY_CALENDARIO)),
+        KEY_RCA;
+
+    DROP TABLE TRF_PLATINUM_POINT_TEMP;
+
+    STORE TRF_PLATINUM_POINT INTO [$(vPathDestinoPlatinumPoint)$(vNomeArquivoPlatinumPoint)] (qvd);
+
+    TRACE QVD Platinum Point gerado com sucesso: $(vPathDestinoPlatinumPoint)$(vNomeArquivoPlatinumPoint);
+
+    DROP TABLE TRF_PLATINUM_POINT;
+
+ELSE
+
+    TRACE >>> ATENCAO: arquivo Platinum Point $(vMesAtual)/$(vAno) ainda nao disponivel ($(vArquivoPlatinumPoint)). QVD nao foi gerado.;
+
+ENDIF
+
+///////////////////////////////////////////////////////////////////////////
+// TRANSFORMADOR MENSAL - METAS P&G (SEÇÃO + DEPARTAMENTO + PLATINUM POINT +
+// ESCOLHA CERTA)
+// Lê a planilha do mês atual (padrão METAS_2026-AGO.xlsx), abas RCA_SEC,
+// RCA_DEP, PLATINUM_POINT e ESCOLHA_CERTA, e salva um QVD por aba - todos
+// com o padrão de nome _AAAA_MM (mês numérico).
+///////////////////////////////////////////////////////////////////////////
+
+
+///////////////////////////////////////////////////////////////////////////
+// 1. CONFIGURAÇÃO E VARIÁVEIS
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigem  = 'lib://4_Plan/Metas P&G/';
+SET vPathDestino = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vAno      = Year(Today());
+LET vMesNum   = Month(Today());
+LET vMesTxt   = Num(vMesNum, '00');                 // 08
+LET vMesAbrevPT = Pick(vMesNum, 'JAN','FEV','MAR','ABR','MAI','JUN',
+                                'JUL','AGO','SET','OUT','NOV','DEZ');  // AGO
+
+LET vArquivoOrigem = '$(vPathOrigem)METAS_$(vAno)-$(vMesAbrevPT).xlsx';
+
+LET vNomeArquivoSecao         = 'TRF_METAS_MES_$(vAno)_$(vMesTxt).qvd';
+LET vNomeArquivoDepartamento  = 'TRF_METAS_DEPARTAMENTO_MES_$(vAno)_$(vMesTxt).qvd';
+LET vNomeArquivoPlatinumPoint = 'TRF_METAS_PLATINUM_POINT_MES_$(vAno)_$(vMesTxt).qvd';
+LET vNomeArquivoEscolhaCerta  = 'TRF_METAS_ESCOLHA_CERTA_MES_$(vAno)_$(vMesTxt).qvd';
+
+TRACE ==============================================;
+TRACE Gerando QVDs de Metas do mes $(vMesAbrevPT)/$(vAno) ($(vMesTxt));
+TRACE ==============================================;
+
+
+///////////////////////////////////////////////////////////////////////////
+// 2. EXTRAÇÃO + GERAÇÃO DOS QVDs
+//    Verifica se a planilha do mês já existe com FileSize() antes de ler.
+//    Como as quatro abas vêm do mesmo arquivo, a checagem é feita uma vez só.
+///////////////////////////////////////////////////////////////////////////
+IF Not IsNull(FileSize('$(vArquivoOrigem)')) THEN
+
+    TRACE Carregando planilha: $(vArquivoOrigem)...;
+
+    /////////////////////////////////////////////////////////////////////////
+    // 2.1 METAS POR SEÇÃO (aba RCA_SEC)
+    /////////////////////////////////////////////////////////////////////////
+    TRF_METAS_SECAO:
+    LOAD
+        CODSEC      	AS [Cod Secao],
+        CODRCA      	AS [Cod RCA],
+        'SECAO'			AS TipoIndicador,
+        'MESATUAL'      AS PeriodoIndicador,
+        META_FAT    	AS Meta,
+        SV          	AS CodSupervisor,
+        "COD DEP"   	AS CodDepartamento
+    FROM [$(vArquivoOrigem)]
+    (ooxml, embedded labels, table is RCA_SEC);
+    
+    STORE TRF_METAS_SECAO INTO [$(vPathDestino)$(vNomeArquivoSecao)] (qvd);
+
+    TRACE QVD de Metas por Secao gerado com sucesso: $(vPathDestino)$(vNomeArquivoSecao);
+
+    DROP TABLE TRF_METAS_SECAO;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 2.2 METAS POR DEPARTAMENTO (aba RCA_DEP)
+    //     Nessa aba, o código do Departamento vem sob o mesmo cabeçalho
+    //     CODSEC (herdado do layout da outra aba) - renomeado aqui para
+    //     CodDepartamento, que é o que ele representa de fato.
+    /////////////////////////////////////////////////////////////////////////
+    TRF_METAS_DEPARTAMENTO:
+    LOAD
+        CODSEC      	AS [Cod Departamento],
+        CODRCA      	AS [Cod RCA],
+        'DEPARTAMENTO'	AS TipoIndicador,
+        'MESATUAL'      AS PeriodoIndicador,
+        META_FAT    	AS MetaFat,
+        META_POS		AS MetaPos,
+        SV          	AS CodSupervisor
+    FROM [$(vArquivoOrigem)]
+    (ooxml, embedded labels, table is RCA_DEP);
+
+    STORE TRF_METAS_DEPARTAMENTO INTO [$(vPathDestino)$(vNomeArquivoDepartamento)] (qvd);
+
+    TRACE QVD de Metas por Departamento gerado com sucesso: $(vPathDestino)$(vNomeArquivoDepartamento);
+
+    DROP TABLE TRF_METAS_DEPARTAMENTO;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 2.3 META PLATINUM POINT (aba PLATINUM_POINT)
+    //     Indicador/TipoIndicador/ClasseIndicador literais confirmados na
+    //     base TRF_BASE_RCA_INDICADORES: DEPARTAMENTO + KPI. Campo de valor
+    //     nomeado MetaPlatinumPoint (único), evitando reuso de "Meta" que
+    //     causaria o bug de chave dupla se este QVD entrar no mesmo
+    //     encadeamento de LEFT JOIN dos outros blocos de meta.
+    /////////////////////////////////////////////////////////////////////////
+    TRF_METAS_PLATINUM_POINT:
+    LOAD
+        COD_RCA       			 AS [Cod RCA],
+        G                        AS CodSupervisor,
+        'PLATINUM POINTS'        AS Indicador,
+        'DEPARTAMENTO'           AS TipoIndicador,
+        'KPI'                    AS ClasseIndicador,
+        'MESATUAL'               AS PeriodoIndicador,
+        META_PP                  AS MetaPlatinumPoint
+    FROM [$(vArquivoOrigem)]
+    (ooxml, embedded labels, table is PLATINUM_POINT);
+   
+    
+    STORE TRF_METAS_PLATINUM_POINT INTO [$(vPathDestino)$(vNomeArquivoPlatinumPoint)] (qvd);
+
+    TRACE QVD de Meta Platinum Point gerado com sucesso: $(vPathDestino)$(vNomeArquivoPlatinumPoint);
+
+    DROP TABLE TRF_METAS_PLATINUM_POINT;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 2.4 META ESCOLHA CERTA (aba ESCOLHA_CERTA)
+    //     Mesmo padrão do bloco anterior - Indicador/TipoIndicador/
+    //     ClasseIndicador literais, campo de valor único (MetaEscolhaCerta).
+    /////////////////////////////////////////////////////////////////////////
+    TRF_METAS_ESCOLHA_CERTA:
+    LOAD
+        COD_RCA       			 AS [Cod RCA],
+        F14                      AS CodSupervisor,
+        'FAIXA ESCOLHA CERTA'    AS Indicador,
+        'DEPARTAMENTO'           AS TipoIndicador,
+        'KPI'                    AS ClasseIndicador,
+        'MESATUAL'               AS PeriodoIndicador,
+        META_EC                  AS MetaEscolhaCerta
+    FROM [$(vArquivoOrigem)]
+    (ooxml, embedded labels, table is ESCOLHA_CERTA);
+    
+
+
+    STORE TRF_METAS_ESCOLHA_CERTA INTO [$(vPathDestino)$(vNomeArquivoEscolhaCerta)] (qvd);
+
+    TRACE QVD de Meta Escolha Certa gerado com sucesso: $(vPathDestino)$(vNomeArquivoEscolhaCerta);
+
+    DROP TABLE TRF_METAS_ESCOLHA_CERTA;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha de Metas $(vMesAbrevPT)/$(vAno) ainda nao disponivel ($(vArquivoOrigem)). QVDs nao foram gerados.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// TRF_BASE_RCA + REALIZADO (TRIMESTRE FIXO + MES) + META - CAMPANHA GILLETTE
+// Cada bloco de Meta usa um campo de VALOR com nome único (MetaSecaoFat /
+// MetaDepFat / MetaDepPos / MetaPlatinumPoint / MetaEscolhaCerta /
+// MetaMix) durante os LEFT JOINs, evitando o bug de chave dupla (campo
+// de valor herdado de um join anterior virando critério de match do
+// join seguinte).
+//
+// Platinum Point, Escolha Certa e Mix Minimo merecem atenção especial:
+// compartilham TipoIndicador='DEPARTAMENTO' e Codigo='3' na base de
+// indicadores (Platinum Point/Escolha Certa também compartilham
+// ClasseIndicador='KPI'; Mix Minimo compartilha ClasseIndicador='MANUAL'
+// com Listing Iniciativas) - sem incluir o nome do Indicador na chave,
+// indicadores diferentes teriam a MESMA chave e se confundiriam no join.
+// Por isso as chaves _MetaPP/_MetaEC/_MetaMix (e _RealizadoMix) incluem
+// o Indicador na fórmula.
+//
+// Mix Minimo é um caso à parte: Realizado e Meta vêm da MESMA tabela de
+// origem (FATO_MIXMINIMO_RCA), então essa fonte é ligada DUAS VEZES -
+// uma para _RealizadoMix, outra para _MetaMix - cada uma com seus
+// próprios campos de valor renomeados de forma única.
+///////////////////////////////////////////////////////////////////////////
+
+LET vDataCarg 	= Date(MonthStart(Today()), 'YYYY_MM');
+LET vDataAux 	= Date(MonthStart(Today()));
+
+// Variaveis para o Trimestre Fixo
+LET vAno       = Year(Today());
+LET vMesAtual  = Month(Today());
+LET vTrimestre = Ceil(vMesAtual / 3);
+LET vMesIni    = (vTrimestre - 1) * 3 + 1;   // ex: T3 -> 7
+LET vMesFim    = vMesIni + 2;                 // ex: T3 -> 9
+
+//----------------------------------------------------------
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    1. BASE DE INDICADORES (todas as combinações RCA x Seção x Período)
+
+//////////////////////////////////////////////////////////////////////////*/
+TRF_BASE_RCA:
+LOAD
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _Realizado,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _Meta,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _MetaDep,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _MetaDepPos,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _MetaPP,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _MetaEC,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _RealizadoMix,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _MetaMix,
+    Date(MonthStart(DATA)) AS DATA,
+    CodRca,
+    Indicador,
+    Codigo,
+    TipoIndicador,
+    ClasseIndicador,
+    PeriodoIndicador
+
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_BASE_RCA_INDICADORES_$(vDataCarg).QVD](qvd);
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    2. REALIZADO (TRIMESTRE + MES) - MODELO VERTICAL
+       Tabela com APENAS a chave _Realizado - sem nenhum campo _Meta aqui,
+       de propósito.
+
+//////////////////////////////////////////////////////////////////////////*/
+REALIZADO_SECAO:
+LOAD
+    '$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Secao")) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _Realizado,
+
+    ValorPedidoLiquido,
+    ValorFaturadoLiquido,
+    ValorDevolucao
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_VENDAS_SECAO_TRIMESTRE_FIXO_$(vAno)_T$(vTrimestre).qvd]
+(qvd);
+
+CONCATENATE (REALIZADO_SECAO)
+LOAD
+    '$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Secao")) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _Realizado,
+
+    ValorPedidoLiquido,
+    ValorFaturadoLiquido,
+    ValorDevolucao
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_VENDAS_SECAO_MES_$(vDataCarg).qvd]
+(qvd);
+
+
+CONCATENATE (REALIZADO_SECAO)
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Departamento")) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _Realizado,
+
+    ValorPedidoLiquido,
+    ValorFaturadoLiquido,
+    ValorDevolucao
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_VENDAS_DEPARTAMENTO_TRIMESTRE_FIXO_$(vAno)_T$(vTrimestre).qvd]
+(qvd);
+
+CONCATENATE (REALIZADO_SECAO)
+LOAD
+   '$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Departamento")) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _Realizado,
+
+    ValorPedidoLiquido,
+    ValorFaturadoLiquido,
+    ValorDevolucao
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_VENDAS_DEPARTAMENTO_MES_$(vDataCarg).qvd]
+(qvd);
+
+CONCATENATE (REALIZADO_SECAO)
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Secao")) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _Realizado,
+
+    QtdClientesPositivadosPedido  	as ValorPedidoLiquido,
+    QtdClientesPositivadosFaturado  as ValorFaturadoLiquido
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_POSITIVACAO_SECAO_MES_$(vDataCarg).qvd]
+(qvd);
+
+CONCATENATE (REALIZADO_SECAO)
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Departamento")) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador AS _Realizado,
+
+    QtdClientesPositivadosPedido	as ValorPedidoLiquido,
+    QtdClientesPositivadosFaturado  as ValorFaturadoLiquido
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_POSITIVACAO_DEPARTAMENTO_MES_$(vDataCarg).qvd]
+(qvd);
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    3. ASSOCIA O REALIZADO À BASE DE INDICADORES
+       Único campo em comum entre TRF_BASE_RCA e REALIZADO_SECAO é
+       _Realizado (REALIZADO_SECAO não tem campo _Meta) - join correto.
+
+//////////////////////////////////////////////////////////////////////////*/
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT REALIZADO_SECAO;
+
+DROP TABLE REALIZADO_SECAO;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    3.1 REALIZADO MIX MINIMO
+        Chave dedicada _RealizadoMix (inclui Indicador, para não colidir
+        com Listing Iniciativas). Campos de valor renomeados de forma
+        única (ValorPedidoLiquidoMix/ValorFaturadoLiquidoMix) - TRF_BASE_RCA
+        já tem ValorPedidoLiquido/ValorFaturadoLiquido desde a seção 3,
+        então usar os mesmos nomes aqui recriaria o bug de chave dupla.
+
+//////////////////////////////////////////////////////////////////////////*/
+REALIZADO_MIXMINIMO:
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim(CodRca)) & '|' & '3' & '|' & 'MESATUAL' & '|' & 'DEPARTAMENTO' & '|' & 'MANUAL' & '|' & 'MIX MINIMO' AS _RealizadoMix,
+
+    ValorPedidoLiquido   AS ValorPedidoLiquidoMix,
+    ValorFaturadoLiquido AS ValorFaturadoLiquidoMix
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_MIXMINIMO_RCA_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT REALIZADO_MIXMINIMO;
+DROP TABLE REALIZADO_MIXMINIMO;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    4. META DE FATURAMENTO POR SEÇÃO
+       Campo de valor renomeado para MetaSecaoFat (único) - garante que
+       este join case só por _Meta, mesmo depois que TRF_BASE_RCA ganhar
+       outros campos de meta nos passos seguintes.
+
+//////////////////////////////////////////////////////////////////////////*/
+META_SECAO:
+LOAD
+    '$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Secao")) & '|' &PeriodoIndicador &'|'&TipoIndicador&'|'&'FATURAMENTO' AS _Meta,
+
+    Meta AS MetaSecaoFat
+
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_METAS_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT META_SECAO;
+DROP TABLE META_SECAO;
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    4. META DE FATURAMENTO GILLETTE TRIMESTRAL
+       Campo de valor renomeado para MetaSecaoFatGilletteTri (único) - garante que
+       este join case só por _Meta, mesmo depois que TRF_BASE_RCA ganhar
+       outros campos de meta nos passos seguintes.
+
+//////////////////////////////////////////////////////////////////////////*/
+
+META_GILLETTE_TRI:
+LOAD
+    '$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Secao")) & '|' &
+    IF(Match("Cod Secao",93,94,96,97,98),'TRIMESTRE FIXO',PeriodoIndicador)
+    &'|'&TipoIndicador&'|'&'FATURAMENTO' AS _Meta,
+	
+    IF(Match("Cod Secao",93,94,96,97,98),Meta*3,Meta)  AS MetaSecaoFatGilletteTri
+
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_METAS_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT META_GILLETTE_TRI;
+DROP TABLE META_GILLETTE_TRI;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    5. META DE FATURAMENTO POR DEPARTAMENTO
+       Campo de valor renomeado para MetaDepFat (único, diferente de
+       MetaSecaoFat) - por isso o único campo comum com TRF_BASE_RCA
+       continua sendo _MetaDep, mesmo já existindo MetaSecaoFat na tabela.
+
+//////////////////////////////////////////////////////////////////////////*/
+META_DEPARTAMENTO_FAT:
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Departamento")) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&'FATURAMENTO' AS _MetaDep,
+
+    MetaFat AS MetaDepFat
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_METAS_DEPARTAMENTO_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT META_DEPARTAMENTO_FAT;
+DROP TABLE META_DEPARTAMENTO_FAT;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    6. META DE POSITIVAÇÃO POR DEPARTAMENTO
+       Campo de valor renomeado para MetaDepPos (único) - mesmo raciocínio
+       dos passos anteriores.
+
+//////////////////////////////////////////////////////////////////////////*/
+META_DEPARTAMENTO_POS:
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & Text(Trim("Cod Departamento")) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&'POSITIVACAO' AS _MetaDepPos,
+
+    MetaPos AS MetaDepPos
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_METAS_DEPARTAMENTO_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT META_DEPARTAMENTO_POS;
+DROP TABLE META_DEPARTAMENTO_POS;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    7. META PLATINUM POINT
+       Codigo e ClasseIndicador fixos ('3' e 'KPI', confirmados na base de
+       indicadores). Como Escolha Certa também é 'DEPARTAMENTO'+'KPI'+'3',
+       o Indicador entra na própria fórmula da chave (_MetaPP) para não
+       colidir com a meta de Escolha Certa.
+
+//////////////////////////////////////////////////////////////////////////*/
+META_PLATINUM_POINT:
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & '3' & '|' & 'MESATUAL' & '|' & 'DEPARTAMENTO' & '|' & 'KPI' & '|' & 'PLATINUM POINTS' AS _MetaPP,
+
+    MetaPlatinumPoint
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_METAS_PLATINUM_POINT_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT META_PLATINUM_POINT;
+DROP TABLE META_PLATINUM_POINT;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    8. META ESCOLHA CERTA
+       Mesmo raciocínio do bloco anterior - Indicador na chave (_MetaEC)
+       para não colidir com a meta de Platinum Point.
+
+//////////////////////////////////////////////////////////////////////////*/
+META_ESCOLHA_CERTA:
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim("Cod RCA")) & '|' & '3' & '|' & 'MESATUAL' & '|' & 'DEPARTAMENTO' & '|' & 'KPI' & '|' & 'FAIXA ESCOLHA CERTA' AS _MetaEC,
+
+    MetaEscolhaCerta
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_METAS_ESCOLHA_CERTA_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT META_ESCOLHA_CERTA;
+DROP TABLE META_ESCOLHA_CERTA;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    8.1 META MIX MINIMO
+        Mesma fonte do Realizado (FATO_MIXMINIMO_RCA), ligada de novo com
+        chave própria (_MetaMix) e campo de valor único (MetaMix) - o
+        campo "Meta" já existiria em TRF_BASE_RCA a essa altura (vindo
+        de META_SECAO), então não reutilizamos esse nome aqui.
+
+//////////////////////////////////////////////////////////////////////////*/
+META_MIXMINIMO:
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim(CodRca)) & '|' & '3' & '|' & 'MESATUAL' & '|' & 'DEPARTAMENTO' & '|' & 'MANUAL' & '|' & 'MIX MINIMO' AS _MetaMix,
+
+    Meta AS MetaMix
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_MIXMINIMO_RCA_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT META_MIXMINIMO;
+DROP TABLE META_MIXMINIMO;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    9. UNIFICAÇÃO - UM ÚNICO CAMPO "Meta", "ValorPedidoLiquido" e
+       "ValorFaturadoLiquido"
+       Cada linha de TRF_BASE_RCA só pode ter batido em UM dos joins de
+       meta (indicadores mutuamente exclusivos por ClasseIndicador/
+       TipoIndicador/Indicador), então Alt() pega o primeiro valor não-nulo
+       entre eles - sem risco de somar meta errada. O mesmo vale para
+       ValorPedidoLiquido/ValorFaturadoLiquido, que agora têm duas
+       origens possíveis (REALIZADO_SECAO ou Mix Minimo).
+
+//////////////////////////////////////////////////////////////////////////*/
+TRF_BASE_RCA_FINAL:
+NoConcatenate
+LOAD
+    *,
+    Alt(MetaSecaoFat, MetaDepFat, MetaDepPos, MetaPlatinumPoint, MetaEscolhaCerta, MetaSecaoFatGilletteTri, MetaMix) AS Meta,
+    Alt(ValorPedidoLiquido, ValorPedidoLiquidoMix)     AS ValorPedidoLiquidoFinal,
+    Alt(ValorFaturadoLiquido, ValorFaturadoLiquidoMix) AS ValorFaturadoLiquidoFinal
+RESIDENT TRF_BASE_RCA;
+
+DROP FIELD
+    MetaSecaoFat, MetaDepFat, MetaDepPos, MetaPlatinumPoint, MetaEscolhaCerta, MetaSecaoFatGilletteTri, MetaMix,
+    ValorPedidoLiquido, ValorFaturadoLiquido, ValorPedidoLiquidoMix, ValorFaturadoLiquidoMix
+FROM TRF_BASE_RCA_FINAL;
+
+RENAME FIELD ValorPedidoLiquidoFinal   TO ValorPedidoLiquido;
+RENAME FIELD ValorFaturadoLiquidoFinal TO ValorFaturadoLiquido;
+
+DROP TABLE TRF_BASE_RCA;
+RENAME TABLE TRF_BASE_RCA_FINAL TO TRF_BASE_RCA;
+
+
+STORE TRF_BASE_RCA INTO [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/BASE_RCA_REAL_SECAO_DEP_MES_$(vDataCarg).qvd];
+DROP TABLE TRF_BASE_RCA;
+
+
+///////////////////////////////////////////////////////////////////////////
+// SEÇÃO: BASE DE INDICADORES + ESCOLHA CERTA - REALIZADO POR RCA
+// Une TRF_BASE_RCA_INDICADORES (produtos/marcas + positivação) com
+// TRF_ESCOLHA_CERTA, ambos agregados no mesmo grão: DATA + CodRca + Indicador.
+///////////////////////////////////////////////////////////////////////////
+
+/*//////////////////////////////////////////////////////////////////////////
+    1. BASE DE INDICADORES (bruto)
+       ValorPedidoLiquido/ValorFaturadoLiquido/ValorDevolucao chegam como
+       TEXTO com vírgula decimal (ex: '74928,42') e '-' para ausência de
+       valor. Conversão explícita aqui: '-' vira 0, vírgula vira ponto
+       antes de transformar em número - sem isso, Sum() pode falhar ou
+       ignorar essas linhas silenciosamente.
+//////////////////////////////////////////////////////////////////////////*/
+TEMP_BASE_INDICADORES:
+LOAD
+	DATA&'|'&CodRca&'|'&Indicador as _Realizado,
+
+    DATA,
+    CodRca,
+    Indicador,
+    ClasseIndicador,
+    Meta,
+    ValorPedidoLiquido,
+    ValorFaturadoLiquido,
+    ValorDevolucao
+
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/BASE_RCA_REAL_SECAO_DEP_MES_$(vDataCarg).QVD]
+(qvd);
+
+/*//////////////////////////////////////////////////////////////////////////
+    2. ESCOLHA CERTA (bruto)
+       Valores aqui já vêm limpos (sem vírgula/placeholder), só renomeio
+       "Cod RCA" para CodRca (sem espaço), pra bater com o nome de campo
+       usado no restante do modelo.
+//////////////////////////////////////////////////////////////////////////*/
+
+TEMP_ESCOLHA_CERTA:
+LOAD
+	DATA&'|'&"Cod RCA"&'|'&Indicador as _Realizado,
+
+    Num(ValorPedidoLiquido)   AS ValorPedidoLiquidoEC,
+    Num(ValorFaturadoLiquido) AS ValorFaturadoLiquidoEC
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_ESCOLHA_CERTA_$(vDataCarg).QVD]
+(qvd);
+
+LEFT JOIN (TEMP_BASE_INDICADORES)
+LOAD * RESIDENT TEMP_ESCOLHA_CERTA;
+
+DROP TABLE TEMP_ESCOLHA_CERTA;
+
+
+TEMP_PLATINUM_POINT:
+LOAD
+	DATA&'|'&"Cod RCA"&'|'&Indicador as _Realizado,
+
+    Num(ValorPedidoLiquido)   AS ValorPedidoLiquidoPP,
+    Num(ValorFaturadoLiquido) AS ValorFaturadoLiquidoPP
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/TRF_PLATINUM_POINT_$(vDataCarg).QVD]
+(qvd);
+
+LEFT JOIN (TEMP_BASE_INDICADORES)
+LOAD * RESIDENT TEMP_PLATINUM_POINT;
+
+DROP TABLE TEMP_PLATINUM_POINT;
+
+
+
+/*//////////////////////////////////////////////////////////////////////////
+    3. AGREGAÇÃO FINAL - DATA + CodRca + Indicador
+       Uma única passada de agregação após concatenar as duas origens -
+       resolve o "agregar por data+codrca+indicador" nos dois QVDs ao
+       mesmo tempo, sem precisar agregar cada um separadamente antes.
+
+       Métricas de % de atingimento calculadas aqui em cima dos próprios
+       Sum() da linha - Qlik permite operações aritméticas entre funções
+       de agregação dentro do mesmo LOAD com GROUP BY.
+//////////////////////////////////////////////////////////////////////////*/
+NoConcatenate
+BASE_RCA_INDICADORES_REALIZADO:
+LOAD
+    DATA,
+    CodRca,
+    ApplyMap('MAP_RCA_NOME',CodRca,'#ND') AS NomeRca,
+    CodRca&' - '&ApplyMap('MAP_RCA_NOME',CodRca,'#ND') AS Rca,
+    
+    ApplyMap('MAP_RCA_SUP', CodRca, '#ND')  AS CodSupervisor,
+    Applymap('MAP_SUP',ApplyMap('MAP_RCA_SUP', CodRca, '#ND'),'#ND')  AS NomeSupervisor,
+    ApplyMap('MAP_RCA_SUP', CodRca, '#ND')&' - '&Applymap('MAP_SUP',ApplyMap('MAP_RCA_SUP', CodRca, '#ND'),'#ND') as Supervisor,
+   
+    Indicador,
+    ClasseIndicador,
+    Sum(Meta)				  AS Meta,
+
+    // Somadas as 3 origens - mutuamente exclusivas por Indicador (uma
+    // linha só pode vir da Base OU do Escolha Certa OU do Platinum Point,
+    // nunca das três ao mesmo tempo), então somar é seguro e mais direto
+    // que Alt(), além de já tratar Null como 0 automaticamente.
+    Sum(ValorPedidoLiquido) + Sum(ValorPedidoLiquidoEC) + Sum(ValorPedidoLiquidoPP)     AS ValorPedidoLiquido,
+    Sum(ValorFaturadoLiquido) + Sum(ValorFaturadoLiquidoEC) + Sum(ValorFaturadoLiquidoPP) AS ValorFaturadoLiquido,
+    Sum(ValorDevolucao)       AS ValorDevolucao,
+
+    // % de atingimento da meta - Null() quando não há meta cadastrada,
+    // em vez de 0%, para não confundir "sem meta" com "meta não atingida"
+    If(Sum(Meta) > 0, (Sum(ValorPedidoLiquido) + Sum(ValorPedidoLiquidoEC) + Sum(ValorPedidoLiquidoPP))     / Sum(Meta)) AS PercAtingimentoPedido,
+    If(Sum(Meta) > 0, (Sum(ValorFaturadoLiquido) + Sum(ValorFaturadoLiquidoEC) + Sum(ValorFaturadoLiquidoPP)) / Sum(Meta)) AS PercAtingimentoFaturado
+
+RESIDENT TEMP_BASE_INDICADORES
+GROUP BY
+    DATA,
+    CodRca,
+    Indicador,
+    ClasseIndicador;
+
+DROP TABLE TEMP_BASE_INDICADORES;
+
+
+///////////////////////////////////////////////////////////////////////////
+// PARTE 1 - TRANSFORMADOR PREM_RCA (planilha CAMPANHAS)
+// Extrai a aba PREM_RCA (Cod RCA, Indicador, Ganho, Faixa) e salva um QVD
+// mensal. GILLETTE TRIMESTRAL é excluído aqui de propósito - será
+// calculado à parte, com regra própria de trimestre.
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemPrem  = 'lib://4_Plan/Metas P&G/';
+SET vPathDestinoPrem = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vAnoPrem    = Year(Today());
+LET vMesTxtPrem = Num(Month(Today()), '00');
+
+LET vArquivoPrem     = '$(vPathOrigemPrem)CAMPANHAS_$(vAnoPrem)_$(vMesTxtPrem).xlsx';
+LET vNomeArquivoPrem = 'TRF_PREM_RCA_$(vAnoPrem)_$(vMesTxtPrem).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoPrem)')) THEN
+
+    TRACE Carregando PREM_RCA $(vMesTxtPrem)/$(vAnoPrem)...;
+
+    TRF_PREM_RCA:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_RCA                AS CodRca,
+        INDICADOR               AS Indicador,
+        GANHO                   AS Ganho,
+        FAIXA                   AS Faixa
+    FROM [$(vArquivoPrem)]
+    (ooxml, embedded labels, table is PREM_RCA)
+    WHERE INDICADOR <> 'GILLETTE TRIMESTRAL';
+
+    STORE TRF_PREM_RCA INTO [$(vPathDestinoPrem)$(vNomeArquivoPrem)] (qvd);
+
+    TRACE QVD de Premiacao RCA gerado com sucesso: $(vPathDestinoPrem)$(vNomeArquivoPrem);
+
+    DROP TABLE TRF_PREM_RCA;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtPrem)/$(vAnoPrem) ainda nao disponivel ($(vArquivoPrem)). QVD de Premiacao nao foi gerado.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// PARTE 2 - CÁLCULO DO GANHO POR RCA/INDICADOR
+// Junta a premiação (Faixa/Ganho) com BASE_RCA_INDICADORES_REALIZADO
+// (já em memória, calculado na seção anterior do script) e calcula duas
+// colunas de ganho: uma baseada no % de atingimento do Pedido, outra no
+// % de atingimento do Faturado - cada uma comparada contra a Faixa
+// exigida daquele indicador especificamente.
+///////////////////////////////////////////////////////////////////////////
+TRF_PREM_RCA:
+LOAD
+    DATA,
+    CodRca,
+    Indicador,
+    Ganho,
+    Faixa
+FROM [$(vPathDestinoPrem)$(vNomeArquivoPrem)]
+(qvd);
+
+// LEFT JOIN por DATA + CodRca + Indicador (os 3 campos em comum são,
+// de propósito, a chave composta correta aqui - não é o bug de chave
+// dupla que já vimos antes, porque os 3 pertencem mesmo à mesma
+// combinação lógica de negócio).
+LEFT JOIN (BASE_RCA_INDICADORES_REALIZADO)
+LOAD * RESIDENT TRF_PREM_RCA;
+
+DROP TABLE TRF_PREM_RCA;
+
+
+BASE_RCA_INDICADORES_REALIZADO_GANHO:
+NoConcatenate
+LOAD
+    *,
+
+    // Null-safe: se não há Faixa (indicador sem premiação configurada,
+    // ou o próprio Gillette Trimestral excluído acima) ou não há % de
+    // atingimento calculado (Meta zerada), o ganho é 0 - nunca Null.
+    If(Not IsNull(Faixa) And Not IsNull(PercAtingimentoPedido) And PercAtingimentoPedido >= Faixa, Ganho, 0)   AS GanhoPedido,
+    If(Not IsNull(Faixa) And Not IsNull(PercAtingimentoFaturado) And PercAtingimentoFaturado >= Faixa, Ganho, 0) AS GanhoFaturado
+
+RESIDENT BASE_RCA_INDICADORES_REALIZADO;
+
+DROP TABLE BASE_RCA_INDICADORES_REALIZADO;
+RENAME TABLE BASE_RCA_INDICADORES_REALIZADO_GANHO TO BASE_RCA_INDICADORES_REALIZADO;
+
+
+///////////////////////////////////////////////////////////////////////////
+// PARTE 1 - TRANSFORMADOR RCA_DEVOL (planilha CAMPANHAS)
+// Extrai a aba RCA_DEVOL (4 faixas de % devolução + % de repasse do
+// ganho por faixa, específicas de cada RCA) e salva um QVD mensal.
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemDevol  = 'lib://4_Plan/Metas P&G/';
+SET vPathDestinoDevol = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vAnoDevol    = Year(Today());
+LET vMesTxtDevol = Num(Month(Today()), '00');
+
+LET vArquivoDevol     = '$(vPathOrigemDevol)CAMPANHAS_$(vAnoDevol)_$(vMesTxtDevol).xlsx';
+LET vNomeArquivoDevol = 'TRF_RCA_DEVOL_$(vAnoDevol)_$(vMesTxtDevol).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoDevol)')) THEN
+
+    TRACE Carregando RCA_DEVOL $(vMesTxtDevol)/$(vAnoDevol)...;
+
+    TRF_RCA_DEVOL:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_RCA                AS CodRca,
+        FAIXA1                 AS Faixa1,
+        GANHO1                 AS GanhoPerc1,
+        FAIXA2                 AS Faixa2,
+        GANHO2                 AS GanhoPerc2,
+        FAIXA3                 AS Faixa3,
+        GANHO3                 AS GanhoPerc3,
+        FAIXA4                 AS Faixa4,
+        GANHO4                 AS GanhoPerc4
+    FROM [$(vArquivoDevol)]
+    (ooxml, embedded labels, table is RCA_DEVOL);
+
+    STORE TRF_RCA_DEVOL INTO [$(vPathDestinoDevol)$(vNomeArquivoDevol)] (qvd);
+
+    TRACE QVD de Faixas Devolucao RCA gerado com sucesso: $(vPathDestinoDevol)$(vNomeArquivoDevol);
+
+    DROP TABLE TRF_RCA_DEVOL;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtDevol)/$(vAnoDevol) ainda nao disponivel ($(vArquivoDevol)). QVD de Faixas Devolucao nao foi gerado.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// PARTE 2 - % DE DEVOLUÇÃO DO RCA (PEDIDO e FATURADO, separados)
+// % Devolução = Total Devolução do RCA / Total Bruto do RCA (Pedido ou
+// Faturado) - usa os valores BRUTOS ("Vlr Tot Pedido"/"Vlr Tot Faturado
+// Venda"), não os líquidos, porque o líquido já desconta a devolução -
+// usar o líquido como denominador tornaria a conta circular.
+///////////////////////////////////////////////////////////////////////////
+TEMP_DEVOL_RCA:
+LOAD
+    "Cod RCA"      AS CodRca,
+    ValorDevolucao AS TotalDevolucaoRca
+FROM [$(vPathDestino)$(vNomeArquivoDevolucaoRca)]
+(qvd);
+
+TEMP_FAT_RCA:
+LOAD
+    "Cod RCA"     AS CodRca,
+    ValorPedido   AS TotalPedidoRca,
+    ValorFaturado AS TotalFaturadoRca
+FROM [$(vPathDestino)$(vNomeArquivoFaturamentoRca)]
+(qvd);
+
+// Único campo em comum é CodRca - join correto, cada tabela traz valores
+// de nome único (TotalDevolucaoRca / TotalPedidoRca / TotalFaturadoRca).
+LEFT JOIN (TEMP_DEVOL_RCA)
+LOAD * RESIDENT TEMP_FAT_RCA;
+
+DROP TABLE TEMP_FAT_RCA;
+
+TEMP_PERC_DEVOL:
+NoConcatenate
+LOAD
+    *,
+    // Null-safe: sem base (Pedido/Faturado), não dá para calcular o %
+    If(TotalPedidoRca > 0,   TotalDevolucaoRca / TotalPedidoRca)   AS PercDevolucaoRcaPedido,
+    If(TotalFaturadoRca > 0, TotalDevolucaoRca / TotalFaturadoRca) AS PercDevolucaoRcaFaturado
+RESIDENT TEMP_DEVOL_RCA;
+
+DROP TABLE TEMP_DEVOL_RCA;
+
+TRF_RCA_DEVOL:
+LOAD CodRca, Faixa1, GanhoPerc1, Faixa2, GanhoPerc2, Faixa3, GanhoPerc3, Faixa4, GanhoPerc4
+FROM [$(vPathDestinoDevol)$(vNomeArquivoDevol)] (qvd);
+
+
+///////////////////////////////////////////////////////////////////////////
+// PARTE 3 - FAIXA DE REPASSE APLICÁVEL (uma para Pedido, uma para Faturado)
+// Mesmas 4 faixas do RCA (o cadastro é único por RCA, não duplicado por
+// Pedido/Faturado), mas cada % de devolução (Pedido/Faturado) percorre a
+// cascata separadamente, gerando dois percentuais de repasse distintos.
+///////////////////////////////////////////////////////////////////////////
+LEFT JOIN (TEMP_PERC_DEVOL)
+LOAD * RESIDENT TRF_RCA_DEVOL;
+
+DROP TABLE TRF_RCA_DEVOL;
+
+TEMP_PERC_DEVOL_FINAL:
+NoConcatenate
+LOAD
+    *,
+    If(PercDevolucaoRcaPedido <= Faixa1, GanhoPerc1,
+    If(PercDevolucaoRcaPedido <= Faixa2, GanhoPerc2,
+    If(PercDevolucaoRcaPedido <= Faixa3, GanhoPerc3,
+       GanhoPerc4))) AS PercRepasseGanhoPedido,
+
+    If(PercDevolucaoRcaFaturado <= Faixa1, GanhoPerc1,
+    If(PercDevolucaoRcaFaturado <= Faixa2, GanhoPerc2,
+    If(PercDevolucaoRcaFaturado <= Faixa3, GanhoPerc3,
+       GanhoPerc4))) AS PercRepasseGanhoFaturado
+
+RESIDENT TEMP_PERC_DEVOL;
+
+DROP TABLE TEMP_PERC_DEVOL;
+RENAME TABLE TEMP_PERC_DEVOL_FINAL TO TEMP_PERC_DEVOL;
+
+
+///////////////////////////////////////////////////////////////////////////
+// PARTE 4 - TOTAL DE GANHOS POR RCA (soma de todos os indicadores)
+///////////////////////////////////////////////////////////////////////////
+TEMP_GANHOS_RCA:
+LOAD
+    CodRca,
+    Sum(GanhoPedido)   AS TotalGanhoPedidoRca,
+    Sum(GanhoFaturado) AS TotalGanhoFaturadoRca
+RESIDENT BASE_RCA_INDICADORES_REALIZADO
+GROUP BY
+    CodRca;
+
+
+///////////////////////////////////////////////////////////////////////////
+// PARTE 5 - GANHO FINAL DO RCA
+// Cada base (Pedido/Faturado) usa o seu próprio % de repasse, calculado
+// a partir do seu próprio % de devolução.
+///////////////////////////////////////////////////////////////////////////
+LEFT JOIN (TEMP_GANHOS_RCA)
+LOAD * RESIDENT TEMP_PERC_DEVOL;
+
+DROP TABLE TEMP_PERC_DEVOL;
+
+GANHO_FINAL_RCA:
+NoConcatenate
+LOAD
+    *,
+    TotalGanhoPedidoRca   * PercRepasseGanhoPedido   AS GanhoFinalPedidoRca,
+    TotalGanhoFaturadoRca * PercRepasseGanhoFaturado AS GanhoFinalFaturadoRca
+RESIDENT TEMP_GANHOS_RCA;
+
+DROP TABLE TEMP_GANHOS_RCA;
+
+
+///////////////////////////////////////////////////////////////////////////
+// TRANSFORMADOR RCA_DEVOL_RANK (planilha CAMPANHAS)
+// Faixa máxima de % devolução que o RCA pode ter para não ser zerado no
+// ranking do Gillette Trimestral. Colunas D/E da planilha são só texto
+// descritivo (nome do RCA, nome do Supervisor) - não carregadas aqui.
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemDevolRank  = 'lib://4_Plan/Metas P&G/';
+SET vPathDestinoDevolRank = 'lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/';
+
+LET vAnoDevolRank    = Year(Today());
+LET vMesTxtDevolRank = Num(Month(Today()), '00');
+
+LET vArquivoDevolRank     = '$(vPathOrigemDevolRank)CAMPANHAS_$(vAnoDevolRank)_$(vMesTxtDevolRank).xlsx';
+LET vNomeArquivoDevolRank = 'TRF_RCA_DEVOL_RANK_$(vAnoDevolRank)_$(vMesTxtDevolRank).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoDevolRank)')) THEN
+
+    TRACE Carregando RCA_DEVOL_RANK $(vMesTxtDevolRank)/$(vAnoDevolRank)...;
+
+    TRF_RCA_DEVOL_RANK:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_RCA                AS CodRca,
+        FAIXA                  AS Faixa
+    FROM [$(vArquivoDevolRank)]
+    (ooxml, embedded labels, table is RCA_DEVOL_RANK);
+
+    STORE TRF_RCA_DEVOL_RANK INTO [$(vPathDestinoDevolRank)$(vNomeArquivoDevolRank)] (qvd);
+
+    TRACE QVD de Faixa Devolucao Rank Gillette gerado com sucesso: $(vPathDestinoDevolRank)$(vNomeArquivoDevolRank);
+
+    DROP TABLE TRF_RCA_DEVOL_RANK;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtDevolRank)/$(vAnoDevolRank) ainda nao disponivel ($(vArquivoDevolRank)). QVD de Faixa Devolucao Rank nao foi gerado.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// PREMIAÇÃO GILLETTE TRIMESTRAL - RANKING POR GRUPO DE SUPERVISORES
+// Cada RCA compete dentro do GrupoRank do seu Supervisor (alguns grupos
+// juntam vários supervisores, outros são um supervisor sozinho). A
+// posição no ranking (por % de atingimento da meta trimestral, do maior
+// para o menor) define o prêmio, consultado em TRF_PREM_RANK_GILLETTE.
+///////////////////////////////////////////////////////////////////////////
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    1. MAPEAMENTO SUPERVISOR -> GRUPO DE RANKING
+
+//////////////////////////////////////////////////////////////////////////*/
+MAP_SUP_GRUPO_GILLETTE:
+MAPPING LOAD
+    CodSupervisor,
+    GrupoRank
+FROM [$(vPathDestinoRank)$(vNomeArquivoSupGrupo)]
+(qvd);
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    2. BASE DE RCAs COM O INDICADOR (todos, sem filtro de meta)
+       Traz TODOS os RCAs com o indicador GILLETTE TRIMESTRAL e % de
+       atingimento calculado - o PercAtingimentoFaturado fica visível
+       para todos aqui. A restrição de "só entra no rank quem bateu
+       100%" é aplicada só na etapa de ranking (seção 3), não aqui -
+       assim quem não bateu a meta ainda aparece na tabela final, só sem
+       Posicao/Premio.
+
+       REGRA DE DEVOLUÇÃO: se PercDevolucaoRcaFaturado do RCA (calculado
+       em GANHO_FINAL_RCA) ultrapassar a Faixa máxima permitida (de
+       TRF_RCA_DEVOL_RANK), o % de atingimento usado no RANKING vira 0 -
+       empurrando o RCA pro fim do seu grupo naturalmente, sem removê-lo
+       da disputa nem alterar o PercAtingimentoFaturado original usado em
+       outros cálculos (ex: Ganho por indicador).
+
+//////////////////////////////////////////////////////////////////////////*/
+MAP_PERC_DEVOL_FAT_RCA:
+MAPPING LOAD
+    CodRca,
+    PercDevolucaoRcaFaturado
+RESIDENT GANHO_FINAL_RCA;
+
+MAP_FAIXA_DEVOL_RANK:
+MAPPING LOAD
+    CodRca,
+    Faixa
+FROM [$(vPathDestinoDevolRank)$(vNomeArquivoDevolRank)]
+(qvd);
+
+BASE_GILLETTE_TRI:
+LOAD
+    CodRca,
+    CodSupervisor,
+    ApplyMap('MAP_SUP_GRUPO_GILLETTE', CodSupervisor, '#ND') AS GrupoRank,
+    PercAtingimentoFaturado,
+
+    ApplyMap('MAP_PERC_DEVOL_FAT_RCA', CodRca) AS PercDevolucaoRcaFaturado,
+    ApplyMap('MAP_FAIXA_DEVOL_RANK', CodRca)   AS FaixaDevolucaoRank,
+
+    // Se não há Faixa cadastrada para o RCA, não penaliza (mantém o
+    // Perc original) - ApplyMap sem default retorna Null, e a
+    // comparação "> Null" nunca é verdadeira.
+    If(
+        ApplyMap('MAP_PERC_DEVOL_FAT_RCA', CodRca) > ApplyMap('MAP_FAIXA_DEVOL_RANK', CodRca),
+        0,
+        PercAtingimentoFaturado
+    ) AS PercAtingimentoFaturadoRank,
+
+    // Flag explícita: o RCA foi zerado no rank por causa da devolução?
+    If(
+        ApplyMap('MAP_PERC_DEVOL_FAT_RCA', CodRca) > ApplyMap('MAP_FAIXA_DEVOL_RANK', CodRca),
+        1, 0
+    ) AS FlagZeradoPorDevolucao
+
+RESIDENT BASE_RCA_INDICADORES_REALIZADO
+WHERE Indicador = 'GILLETTE TRIMESTRAL'
+  AND Not IsNull(PercAtingimentoFaturado);
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    3. RANKING - SÓ ENTRE OS ELEGÍVEIS (>= 100% da meta)
+       WHERE aqui restringe o cálculo de posição a quem bateu a meta -
+       quem não bateu simplesmente não entra nesta tabela temporária,
+       então nunca ocupa uma posição nem "atrapalha" a contagem dos que
+       bateram.
+       Padrão clássico do Qlik para calcular posição sequencial no
+       script: ORDER BY GrupoRank + métrica DESC, e Peek() compara com a
+       linha anterior já processada - se o grupo mudou, reinicia a
+       posição em 1; se é o mesmo grupo, incrementa.
+       Empate não é tratado (confirmado que não ocorre na prática).
+
+//////////////////////////////////////////////////////////////////////////*/
+RANKING_GILLETTE:
+LOAD
+    CodRca,
+    GrupoRank,
+    If(GrupoRank = Peek('GrupoRank'), Peek('Posicao') + 1, 1) AS Posicao
+RESIDENT BASE_GILLETTE_TRI
+WHERE PercAtingimentoFaturado >= 1   // só participa do rank quem bateu 100% ou mais
+ORDER BY GrupoRank, PercAtingimentoFaturadoRank Desc;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    4. PRÊMIO POR POSIÇÃO NO RANKING
+       Chave composta GrupoRank + Posicao (as duas em comum de propósito -
+       é a combinação correta que identifica o prêmio na tabela de
+       origem). RCA que ficou além do número de posições premiadas do
+       seu grupo não encontra match - Premio fica Null, tratado como 0.
+
+//////////////////////////////////////////////////////////////////////////*/
+TRF_PREM_RANK_GILLETTE:
+LOAD
+    GrupoRank,
+    Posicao,
+    Premio
+FROM [$(vPathDestinoRank)$(vNomeArquivoPremRank)]
+(qvd);
+
+LEFT JOIN (RANKING_GILLETTE)
+LOAD * RESIDENT TRF_PREM_RANK_GILLETTE;
+
+DROP TABLE TRF_PREM_RANK_GILLETTE;
+
+// A partir daqui só precisamos de CodRca + Posicao + Premio para juntar
+// de volta na base completa - descarta GrupoRank para não virar campo
+// em comum acidental no próximo LEFT JOIN.
+DROP FIELD GrupoRank FROM RANKING_GILLETTE;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    5. JUNTA RANKING/PRÊMIO DE VOLTA NA BASE COMPLETA
+       Único campo em comum agora é CodRca - RCAs que não bateram 100%
+       (e por isso não estão em RANKING_GILLETTE) ficam com Posicao/
+       Premio em branco, mas continuam na tabela com o
+       PercAtingimentoFaturado visível.
+
+//////////////////////////////////////////////////////////////////////////*/
+LEFT JOIN (BASE_GILLETTE_TRI)
+LOAD * RESIDENT RANKING_GILLETTE;
+
+DROP TABLE RANKING_GILLETTE;
+
+PREMIACAO_GILLETTE_TRI:
+NoConcatenate
+LOAD
+    *,
+    Alt(Premio, 0) AS PremioGilletteTri
+RESIDENT BASE_GILLETTE_TRI;
+
+DROP TABLE BASE_GILLETTE_TRI;
+
+
+
