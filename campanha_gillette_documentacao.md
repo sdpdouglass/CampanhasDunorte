@@ -1,0 +1,174 @@
+# Documentação Técnica — CAMPANHAS DUNORTE DISTRIBUIDORA.QVS
+
+> Complementa `CAMPANHAS.MD` (regras de negócio) e `METRICAS E DIMENSOES.MD`
+> (mapeamento de dimensões/métricas) com o que foi levantado a partir da
+> leitura do script de carga real. Objetivo: servir de contexto para
+> continuar o desenvolvimento sem precisar reler o `.QVS` inteiro (2008
+> linhas) a cada conversa.
+
+## 1. O que este script faz
+
+Pipeline de transformação (ETL) que roda mensalmente/trimestralmente e
+gera uma série de QVDs intermediários e finais usados pelos dashboards de
+campanhas comerciais (P&G / Mega Marcas) da Dunorte Distribuidora. Não
+tem UI — é só carga de dados.
+
+Fontes de origem:
+- Planilhas Excel em `lib://4_Plan/Metas P&G/` (`CAMPANHAS_AAAA_MM.xlsx`,
+  `METAS_AAAA-MMM.xlsx`) — cadastros de metas, prêmios e faixas.
+- QVDs já tratados em `lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/`
+  (`COMERCIAL_TRATADO_AAAA_MM.QVD`) — fato de vendas do mês.
+- QVDs de outras esteiras (sem `/TESTE/`): Escolha Certa e Platinum Point,
+  em `lib://Carga_Duno/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/`.
+- Cadastros: `CAD_RCA.QVD`, `CAD_CLIENTE.QVD` em
+  `lib://Carga_Duno/EXTRATOR/CADASTRO/`.
+
+Destino final dos QVDs transformados:
+`lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/`
+
+## 2. Ordem de execução (alto nível)
+
+1. **Mappings de cadastro** (`MAP_SUP`, `MAP_RCA_NOME`, `MAP_RCA_SUP`,
+   `MAP_CLIENTE_PRINC`) — carregados uma vez, usados via `ApplyMap()` em
+   quase todo o resto do script.
+2. **TRF_BASE_RCA_INDICADORES** — extrai a planilha CAMPANHAS (abas
+   `PREM_RCA` + `INDICADORES`) e gera a base "catálogo" de indicadores
+   (todo indicador que existe, independente de ter sido batido ou não).
+3. **PREM_RANK_GILLETE** — ranking de prêmio por posição/grupo (Gillette
+   Trimestral) + mapeamento supervisor→grupo de rank.
+4. **Fato Vendas Trimestre Fixo** (Seção + Departamento) — consolida os 3
+   meses do trimestre atual.
+5. **Fato Vendas Mês Atual** (Seção + Departamento + RCA) — inclui
+   Positivação de Clientes e o cálculo completo de **Mix Mínimo** (seção
+   7 do script, ver item 4 abaixo).
+6. **Escolha Certa** e **Platinum Point** (mês atual) — QVDs de KPI por
+   RCA.
+7. **Metas P&G** — lê `METAS_AAAA-MMM.xlsx` (abas `RCA_SEC`, `RCA_DEP`,
+   `PLATINUM_POINT`, `ESCOLHA_CERTA`) e gera um QVD de meta por aba.
+8. **TRF_BASE_RCA** (montagem vertical) — uma tabela única
+   Data+RCA+Indicador com Meta e Realizado juntos, feita via uma
+   sequência de `LEFT JOIN`s com chaves textuais compostas
+   (`_Meta`, `_MetaDep`, `_MetaPP`, `_MetaEC`, `_MetaMix`...) — cada
+   join usa um nome de campo de valor único para evitar o "bug de chave
+   dupla" (ver seção 5). Resultado: `BASE_RCA_REAL_SECAO_DEP_MES_AAAA_MM.qvd`.
+9. **BASE_RCA_INDICADORES_REALIZADO** — agrega tudo (Base + Escolha
+   Certa + Platinum Point) no grão Data+RCA+Indicador, calcula
+   `PercAtingimentoPedido`/`PercAtingimentoFaturado`.
+10. **Premiação RCA** (`PREM_RCA`) — cruza faixa de premiação da planilha
+    com o % de atingimento realizado → `GanhoPedido`/`GanhoFaturado`.
+11. **Devolução RCA** (`RCA_DEVOL`) — % de devolução por RCA e faixa de
+    repasse aplicável → `GanhoFinalPedidoRca`/`GanhoFinalFaturadoRca`.
+12. **Ranking Gillette Trimestral** (`RCA_DEVOL_RANK` +
+    `PREM_RANK_GILLETTE`) — só entram no ranking RCAs com ≥100% de
+    atingimento; RCAs com devolução acima da faixa máxima permitida são
+    zerados no ranking (mas não no ganho por indicador). Resultado final:
+    `PREMIACAO_GILLETTE_TRI`.
+
+## 3. Indicadores implementados no script (x regras de negócio)
+
+| Indicador (CAMPANHAS.MD)              | Implementado no `.QVS`?                                  |
+|----------------------------------------|-----------------------------------------------------------|
+| Campanha Gillette (Trimestral)         | Sim — seções "Fato Vendas Trimestre Fixo" + Ranking Gillette |
+| Campanha Mensal (indicadores gerais)   | Sim — Fato Vendas Mês Atual (Seção/Departamento/RCA)       |
+| Regra de devolução (Gillette e Mensal) | Sim — blocos RCA_DEVOL e RCA_DEVOL_RANK                    |
+| Mix Mínimo Contrato                    | Sim — seção 7 completa (ver item 4)                        |
+| Escolha Certa Especial (R$20/positivação, só RCA) | **Parcial** — o script gera o KPI `FAIXA ESCOLHA CERTA` (soma de `QTD_ESCOLHA_CERTA` por faixa), mas o cálculo do valor R$20 por positivação não aparece neste `.QVS`. Verificar se é feito em outra camada (dashboard/expressão) ou está faltando. |
+| Indicador Listing                      | **Não encontrado.** Só existe uma menção lateral em comentário ("...`ClasseIndicador='MANUAL'` com Listing Iniciativas") sugerindo que compartilha namespace de chave com Mix Mínimo, mas nenhum bloco de carga para Listing foi localizado. |
+| Campanha PET (Supervisor Suzy 240+340→240340) | **Não encontrado neste arquivo.** Nem o indicador PET nem o código fictício 240340 aparecem no script lido. Pode estar em outro `.qvs`/tab do projeto Qlik. |
+| Supervisor Gerson (73+74→7374)         | **Não encontrado neste arquivo.** Mesma observação acima. |
+
+> Ação sugerida: confirmar com quem mantém o app Qlik se PET, Listing e os
+> supervisores fictícios (7374/240340) vivem em outro script/tab antes de
+> assumir que estão faltando.
+
+## 4. Mix Mínimo — como funciona no script (seção 7, dentro do bloco "Mês Atual")
+
+Implementa a regra do `CAMPANHAS.MD`: cliente principal precisa positivar
+um número mínimo de **grupos de produto** dentro da sua **Categoria**
+(DPP/CC/HFS/NMR), e o RCA só ganha se **todos** os seus clientes
+principais baterem (regra tudo-ou-nada).
+
+Passo a passo (nomes de tabela no script):
+1. `TRF_MIX_MIN` — Cliente Principal × Categoria × Objetivo (nº de grupos
+   a bater), vindo da aba `MIX_MIN`.
+2. `TRF_MIXMIN_PRODUTO_GRUPO` / `TRF_MIXMIN_GRUPO` — mapeamento
+   Produto→Grupo e Grupo→QtdMin, vindo da aba `MIXMIN_GRUPO_PRODUTO`
+   (colunas mescladas na planilha original, tratadas com cuidado).
+3. `MIXMIN_ELEGIVEL` — join Cliente×Grupo por Categoria (todo cliente
+   pareado com todos os grupos da própria categoria).
+4. `TEMP_VENDAS_MIXMIN` → `COMPRA_CLIENTE_GRUPO` — quantidade realmente
+   comprada por Cliente Principal + Grupo (só conta valor > 0).
+5. `MIXMIN_GRUPO_FLAG` — grupo positivado se `QtdComprada >= QtdMin`.
+6. `MIXMIN_CLIENTE_FLAG` — cliente atingiu objetivo se
+   `GruposPositivados >= Objetivo`.
+7. `FATO_MIXMINIMO_RCA` — `Min()` do flag por cliente agregado por RCA:
+   só fica 1 (100%) se **todos** os clientes do RCA bateram.
+
+QVD final: `FATO_MIXMINIMO_RCA_MES_AAAA_MM.qvd`. Esse mesmo QVD alimenta
+tanto o Realizado quanto a Meta do indicador "MIX MINIMO" na montagem de
+`TRF_BASE_RCA` (é ligado duas vezes, com chaves `_RealizadoMix`/`_MetaMix`
+separadas).
+
+## 5. Convenções importantes do script (para não quebrar nada em manutenção)
+
+- **Chaves compostas com nome de campo único por join**: toda vez que um
+  novo bloco de Meta é `LEFT JOIN`ado em `TRF_BASE_RCA`, o campo de valor
+  vem renomeado (`MetaSecaoFat`, `MetaDepFat`, `MetaPlatinumPoint`...).
+  Isso evita o "bug de chave dupla" do Qlik: se dois LEFT JOINs
+  sucessivos compartilhassem o mesmo nome de campo de valor, esse campo
+  viraria parte da chave de match do segundo join sem querer. Ao criar
+  um novo bloco de Meta/Realizado, sempre dar um nome de campo de valor
+  exclusivo antes do join.
+- **Indicadores que dividem `TipoIndicador`/`Codigo`**: Platinum Point,
+  Escolha Certa e Mix Mínimo compartilham `TipoIndicador='DEPARTAMENTO'`
+  e `Codigo='3'` na base de indicadores — por isso o nome do `Indicador`
+  entra na fórmula da chave (`_MetaPP`, `_MetaEC`, `_MetaMix`) para não
+  colidir.
+- **Caminhos**: `vPathMetasPG`, `vPathCampanhas`, `vPathVendasMes` foram
+  centralizados no topo do script (ver Changelog). Escolha Certa e
+  Platinum Point são exceção — leem de fora de `/TESTE/`
+  (`lib://Carga_Duno/TRANSFORMADOR/...`), propositalmente diferente do
+  resto.
+- **Padrão de bloco opcional**: quase todo bloco de extração é envolvido
+  em `IF Not IsNull(FileSize(...)) THEN ... ELSE TRACE aviso ENDIF` —
+  se o arquivo de origem do mês/trimestre ainda não existe, o bloco é
+  pulado sem quebrar o restante da carga (útil pra rodar o script antes
+  do fechamento do mês).
+- **Vigência sempre = mês/trimestre atual**: todas as datas são derivadas
+  de `Today()`. Não há parâmetro para reprocessar um mês passado sem
+  editar o script manualmente — se isso virar necessidade recorrente,
+  vale adicionar uma variável de override no topo.
+
+## 6. Changelog de otimizações aplicadas (2026-08-26)
+
+1. **Eliminado round-trip de disco no bloco Mix Mínimo.** `TRF_MIX_MIN`,
+   `TRF_MIXMIN_PRODUTO_GRUPO` e `TRF_MIXMIN_GRUPO` deixaram de ser
+   gravadas em QVD e imediatamente relidas do disco — agora permanecem
+   residentes em memória e são reaproveitadas direto pelas seções
+   seguintes. Os QVDs entregáveis continuam sendo gerados normalmente.
+2. **Caminhos de origem/destino centralizados** em três constantes no
+   topo do script (`vPathMetasPG`, `vPathCampanhas`, `vPathVendasMes`),
+   substituindo ~10 declarações `SET` idênticas espalhadas pelo arquivo.
+   Os blocos de Escolha Certa/Platinum Point mantiveram seu path próprio
+   (origem diferente, sem `/TESTE/`).
+3. **Corrigido comentário desatualizado** na seção "BASE DE INDICADORES
+   (bruto)" que descrevia uma conversão texto→número (vírgula decimal)
+   que não existe em nenhum ponto do código — os valores já chegam
+   numéricos (produzidos por `Sum()` mais acima no próprio script).
+   Substituído por nota + `// TODO: verify` para o caso da fonte mudar.
+
+Nenhuma lógica de negócio, nome de campo ou QVD de saída foi alterado —
+mudanças puramente estruturais/de I/O e de documentação. **Ainda não
+validado rodando no Qlik Cloud** — validar antes de subir para produção.
+
+## 7. Pontos em aberto para continuar o projeto
+
+- Confirmar onde vivem os indicadores **PET**, **Listing** e os
+  supervisores fictícios **Gerson (7374)** / **Suzy (240340)** — não
+  estão neste `.QVS`.
+- Confirmar se o valor de R$20 por positivação do **Escolha Certa
+  Especial** é calculado em algum lugar (script ou app Qlik) — não
+  localizado aqui.
+- O script assume `Today()` como referência de mês/trimestre em ~10
+  pontos diferentes — se for necessário reprocessar meses fechados,
+  vale adicionar parametrização.
