@@ -1443,6 +1443,7 @@ STORE TRF_BASE_RCA INTO [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA
 DROP TABLE TRF_BASE_RCA;
 
 
+
 ///////////////////////////////////////////////////////////////////////////
 // SEÇÃO: BASE DE INDICADORES + ESCOLHA CERTA - REALIZADO POR RCA
 // Une TRF_BASE_RCA_INDICADORES (produtos/marcas + positivação) com
