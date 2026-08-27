@@ -802,9 +802,184 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
 
         DROP TABLE FATO_MIXMINIMO_RCA;
 
+
+        /////////////////////////////////////////////////////////////////////
+        // 8. INDICADOR LISTING INICIATIVAS - 100% CARTEIRA
+        //    Cada Cliente Principal (mesma base de participantes da aba
+        //    MIX_MIN) precisa comprar TODOS os produtos da aba
+        //    LISTING_PRODUTOS que pertencem ao seu proprio RAMO (RAMO do
+        //    produto comparado com o RAMO do cliente, vindo da aba
+        //    MIX_MIN) - cada produto exige uma quantidade minima em
+        //    CAIXAS (QTDMIN_CX, comparado contra QtdCaixaPedidoLiquido/
+        //    QtdCaixaFaturadoLiquido). O RCA so ganha se TODOS os seus
+        //    Clientes Principais completarem a propria lista (regra
+        //    tudo ou nada - "100% CARTEIRA"), mesmo padrao do Mix
+        //    Minimo acima. Precisa rodar AQUI, antes do DROP TABLE
+        //    TMP_VENDAS logo abaixo, porque reaproveita TMP_VENDAS
+        //    (produto/caixa por cliente) ainda em memoria.
+        /////////////////////////////////////////////////////////////////////
+
+        /////////////////////////////////////////////////////////////////////
+        // 8.1 PARTICIPANTES (Cliente Principal x RCA x Ramo) - mesma
+        //     base de clientes/RCAs da aba MIX_MIN, so os campos
+        //     necessarios para esta campanha.
+        /////////////////////////////////////////////////////////////////////
+        LISTING_PARTICIPANTES:
+        LOAD DISTINCT
+            COD_RCA      AS CodRca,
+            CODCLIPRINC  AS CodClientePrincipal,
+            RAMO         AS Ramo
+        FROM [$(vArquivoMix)]
+        (ooxml, embedded labels, table is MIX_MIN)
+        WHERE Not IsNull(COD_RCA);
+
+        /////////////////////////////////////////////////////////////////////
+        // 8.2 PRODUTOS OBRIGATORIOS POR RAMO
+        /////////////////////////////////////////////////////////////////////
+        TRF_LISTING_PRODUTOS:
+        LOAD
+            COD_PRODUTO AS CodProduto,
+            RAMO        AS Ramo,
+            QTDMIN_CX   AS QtdMinCx
+        FROM [$(vArquivoMix)]
+        (ooxml, embedded labels, table is LISTING_PRODUTOS)
+        WHERE Not IsNull(COD_PRODUTO);
+
+        /////////////////////////////////////////////////////////////////////
+        // 8.3 CONJUNTO ELEGIVEL (Cliente x Produto obrigatorio do Ramo)
+        //     JOIN comum por "Ramo" cruza cada cliente com TODOS os
+        //     produtos exigidos do proprio ramo - inclusive produtos
+        //     que ele nao comprou nada (ficam elegiveis, mas vao zerar
+        //     na comparacao com QtdMinCx mais adiante).
+        /////////////////////////////////////////////////////////////////////
+        NoConcatenate
+        LISTING_ELEGIVEL:
+        LOAD
+            CodRca,
+            CodClientePrincipal,
+            Ramo
+        RESIDENT LISTING_PARTICIPANTES;
+
+        DROP TABLE LISTING_PARTICIPANTES;
+
+        JOIN (LISTING_ELEGIVEL)
+        LOAD
+            Ramo,
+            CodProduto,
+            QtdMinCx
+        RESIDENT TRF_LISTING_PRODUTOS;
+
+        DROP TABLE TRF_LISTING_PRODUTOS;
+
+        /////////////////////////////////////////////////////////////////////
+        // 8.4 QUANTIDADE REALMENTE COMPRADA POR CLIENTE + PRODUTO (em
+        //     CAIXAS). Filtra TMP_VENDAS so para produtos exigidos pelo
+        //     Listing e so para Clientes Principais participantes -
+        //     depois soma por Cliente+Produto. So soma a quantidade se
+        //     o valor correspondente for > 0 - evita contar linha com
+        //     valor zerado/negativo (ex: estorno, ajuste) como compra
+        //     de verdade.
+        /////////////////////////////////////////////////////////////////////
+        TEMP_VENDAS_LISTING:
+        LOAD
+            "Cod Cliente Principal",
+            "Cod Produto",
+            QtdCaixaPedidoLiquido,
+            QtdCaixaFaturadoLiquido,
+            "Vlr Venda Liquida",
+            "Vlr Tot Faturado Liquido Venda"
+        RESIDENT TMP_VENDAS
+        WHERE Exists(CodProduto, "Cod Produto")
+          AND Exists(CodClientePrincipal, "Cod Cliente Principal");
+
+        COMPRA_CLIENTE_PRODUTO_LISTING:
+        LOAD
+            "Cod Cliente Principal" AS CodClientePrincipal,
+            "Cod Produto"           AS CodProduto,
+            Sum(If("Vlr Venda Liquida" > 0, QtdCaixaPedidoLiquido))                AS QtdCaixaPedidaProduto,
+            Sum(If("Vlr Tot Faturado Liquido Venda" > 0, QtdCaixaFaturadoLiquido)) AS QtdCaixaFaturadaProduto
+        RESIDENT TEMP_VENDAS_LISTING
+        GROUP BY
+            "Cod Cliente Principal",
+            "Cod Produto";
+
+        DROP TABLE TEMP_VENDAS_LISTING;
+
+        /////////////////////////////////////////////////////////////////////
+        // 8.5 POSITIVAÇÃO DO PRODUTO (por Cliente)
+        //     LEFT JOIN por CodClientePrincipal + CodProduto - produtos
+        //     sem nenhuma compra ficam com QtdCaixaPedidaProduto/
+        //     QtdCaixaFaturadaProduto em Null, tratados como 0 com
+        //     Alt() antes de comparar com QtdMinCx.
+        /////////////////////////////////////////////////////////////////////
+        LEFT JOIN (LISTING_ELEGIVEL)
+        LOAD * RESIDENT COMPRA_CLIENTE_PRODUTO_LISTING;
+
+        DROP TABLE COMPRA_CLIENTE_PRODUTO_LISTING;
+
+        LISTING_PRODUTO_FLAG:
+        NoConcatenate
+        LOAD
+            *,
+            If(Alt(QtdCaixaPedidaProduto, 0)   >= QtdMinCx, 1, 0) AS FlagProdutoPositivadoPedido,
+            If(Alt(QtdCaixaFaturadaProduto, 0) >= QtdMinCx, 1, 0) AS FlagProdutoPositivadoFaturado
+        RESIDENT LISTING_ELEGIVEL;
+
+        DROP TABLE LISTING_ELEGIVEL;
+
+        /////////////////////////////////////////////////////////////////////
+        // 8.6 LISTA COMPLETA (por Cliente)
+        //     Cliente so completa o Listing se TODOS os produtos
+        //     exigidos do seu Ramo foram positivados - Min() do flag
+        //     por produto: um unico produto faltando (flag 0) ja
+        //     derruba o cliente para 0.
+        /////////////////////////////////////////////////////////////////////
+        LISTING_CLIENTE:
+        LOAD
+            CodRca,
+            CodClientePrincipal,
+            Min(FlagProdutoPositivadoPedido)   AS FlagClienteCompletouPedido,
+            Min(FlagProdutoPositivadoFaturado) AS FlagClienteCompletouFaturado
+        RESIDENT LISTING_PRODUTO_FLAG
+        GROUP BY
+            CodRca,
+            CodClientePrincipal;
+
+        DROP TABLE LISTING_PRODUTO_FLAG;
+
+        /////////////////////////////////////////////////////////////////////
+        // 8.7 CONSOLIDAÇÃO POR RCA - 100% CARTEIRA (TUDO OU NADA)
+        //     Min() do flag por cliente: se algum cliente da carteira
+        //     do RCA nao completou o Listing, o Min vira 0 - so fica 1
+        //     (100%) se TODA a carteira (todos os Clientes Principais
+        //     do RCA) completou a propria lista de produtos
+        //     obrigatorios.
+        /////////////////////////////////////////////////////////////////////
+        FATO_LISTING_RCA:
+        LOAD
+            CodRca,
+            'DEPARTAMENTO'         AS TipoIndicador,
+            'MESATUAL'             AS PeriodoIndicador,
+            'MANUAL'               AS ClasseIndicador,
+            'LISTING INICIATIVAS--100% CARTEIRA'  AS Indicador,
+            Min(FlagClienteCompletouPedido)   AS ValorPedidoLiquido,   // já vem como 0 ou 1 (0%/100%)
+            Min(FlagClienteCompletouFaturado) AS ValorFaturadoLiquido, // já vem como 0 ou 1 (0%/100%)
+            1                                  AS Meta                 // Meta fixa = 1 (100% da carteira)
+        RESIDENT LISTING_CLIENTE
+        GROUP BY
+            CodRca;
+
+        DROP TABLE LISTING_CLIENTE;
+
+        STORE FATO_LISTING_RCA INTO [$(vPathDestinoMix)FATO_LISTING_RCA_MES_$(vAnoMix)_$(vMesTxtMix).qvd] (qvd);
+
+        TRACE QVD de Listing Iniciativas por RCA gerado com sucesso.;
+
+        DROP TABLE FATO_LISTING_RCA;
+
     ELSE
 
-        TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtMix)/$(vAnoMix) ainda nao disponivel ($(vArquivoMix)). QVDs de Mix Minimo nao foram gerados.;
+        TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtMix)/$(vAnoMix) ainda nao disponivel ($(vArquivoMix)). QVDs de Mix Minimo e Listing Iniciativas nao foram gerados.;
 
     ENDIF
 
@@ -1081,23 +1256,25 @@ ENDIF
 // TRF_BASE_RCA + REALIZADO (TRIMESTRE FIXO + MES) + META - CAMPANHA GILLETTE
 // Cada bloco de Meta usa um campo de VALOR com nome único (MetaSecaoFat /
 // MetaDepFat / MetaDepPos / MetaPlatinumPoint / MetaEscolhaCerta /
-// MetaMix) durante os LEFT JOINs, evitando o bug de chave dupla (campo
-// de valor herdado de um join anterior virando critério de match do
-// join seguinte).
+// MetaMix / MetaListing) durante os LEFT JOINs, evitando o bug de chave
+// dupla (campo de valor herdado de um join anterior virando critério de
+// match do join seguinte).
 //
-// Platinum Point, Escolha Certa e Mix Minimo merecem atenção especial:
-// compartilham TipoIndicador='DEPARTAMENTO' e Codigo='3' na base de
-// indicadores (Platinum Point/Escolha Certa também compartilham
-// ClasseIndicador='KPI'; Mix Minimo compartilha ClasseIndicador='MANUAL'
-// com Listing Iniciativas) - sem incluir o nome do Indicador na chave,
-// indicadores diferentes teriam a MESMA chave e se confundiriam no join.
-// Por isso as chaves _MetaPP/_MetaEC/_MetaMix (e _RealizadoMix) incluem
-// o Indicador na fórmula.
+// Platinum Point, Escolha Certa, Mix Minimo e Listing Iniciativas
+// merecem atenção especial: compartilham TipoIndicador='DEPARTAMENTO' e
+// Codigo='3' na base de indicadores (Platinum Point/Escolha Certa também
+// compartilham ClasseIndicador='KPI'; Mix Minimo e Listing Iniciativas
+// compartilham ClasseIndicador='MANUAL') - sem incluir o nome do
+// Indicador na chave, indicadores diferentes teriam a MESMA chave e se
+// confundiriam no join. Por isso as chaves _MetaPP/_MetaEC/_MetaMix/
+// _MetaListing (e _RealizadoMix/_RealizadoListing) incluem o Indicador
+// na fórmula.
 //
-// Mix Minimo é um caso à parte: Realizado e Meta vêm da MESMA tabela de
-// origem (FATO_MIXMINIMO_RCA), então essa fonte é ligada DUAS VEZES -
-// uma para _RealizadoMix, outra para _MetaMix - cada uma com seus
-// próprios campos de valor renomeados de forma única.
+// Mix Minimo e Listing Iniciativas são casos à parte: Realizado e Meta
+// vêm da MESMA tabela de origem (FATO_MIXMINIMO_RCA / FATO_LISTING_RCA),
+// então cada fonte é ligada DUAS VEZES - uma para _RealizadoMix/
+// _RealizadoListing, outra para _MetaMix/_MetaListing - cada uma com
+// seus próprios campos de valor renomeados de forma única.
 ///////////////////////////////////////////////////////////////////////////
 
 LET vDataCarg 	= Date(MonthStart(Today()), 'YYYY_MM');
@@ -1127,6 +1304,8 @@ LOAD
     Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _MetaEC,
     Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _RealizadoMix,
     Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _MetaMix,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _RealizadoListing,
+    Date(MonthStart(DATA)) & '|' & Text(Trim(CodRca)) & '|' & Text(Trim(Codigo)) & '|' & PeriodoIndicador&'|'&TipoIndicador&'|'&ClasseIndicador&'|'&Indicador AS _MetaListing,
     Date(MonthStart(DATA)) AS DATA,
     CodRca,
     Indicador,
@@ -1240,6 +1419,31 @@ FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/F
 LEFT JOIN (TRF_BASE_RCA)
 LOAD * RESIDENT REALIZADO_MIXMINIMO;
 DROP TABLE REALIZADO_MIXMINIMO;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    3.2 REALIZADO LISTING INICIATIVAS
+        Mesmo padrão do bloco anterior (Mix Mínimo) - chave dedicada
+        _RealizadoListing (inclui Indicador, para não colidir com Mix
+        Mínimo, já que os dois compartilham Codigo='3' + TipoIndicador=
+        'DEPARTAMENTO' + ClasseIndicador='MANUAL'). Campos de valor
+        renomeados de forma única (ValorPedidoLiquidoListing/
+        ValorFaturadoLiquidoListing).
+
+//////////////////////////////////////////////////////////////////////////*/
+REALIZADO_LISTING:
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim(CodRca)) & '|' & '3' & '|' & 'MESATUAL' & '|' & 'DEPARTAMENTO' & '|' & 'MANUAL' & '|' & 'LISTING INICIATIVAS--100% CARTEIRA' AS _RealizadoListing,
+
+    ValorPedidoLiquido   AS ValorPedidoLiquidoListing,
+    ValorFaturadoLiquido AS ValorFaturadoLiquidoListing
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_LISTING_RCA_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT REALIZADO_LISTING;
+DROP TABLE REALIZADO_LISTING;
 
 
 /*//////////////////////////////////////////////////////////////////////////
@@ -1395,28 +1599,50 @@ DROP TABLE META_MIXMINIMO;
 
 /*//////////////////////////////////////////////////////////////////////////
 
+    8.2 META LISTING INICIATIVAS
+        Mesmo padrão do bloco anterior (Mix Mínimo) - mesma fonte do
+        Realizado (FATO_LISTING_RCA), ligada de novo com chave própria
+        (_MetaListing) e campo de valor único (MetaListing).
+
+//////////////////////////////////////////////////////////////////////////*/
+META_LISTING:
+LOAD
+	'$(vDataAux)' & '|' & Text(Trim(CodRca)) & '|' & '3' & '|' & 'MESATUAL' & '|' & 'DEPARTAMENTO' & '|' & 'MANUAL' & '|' & 'LISTING INICIATIVAS--100% CARTEIRA' AS _MetaListing,
+
+    Meta AS MetaListing
+FROM [lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/FATO_LISTING_RCA_MES_$(vDataCarg).qvd]
+(qvd);
+
+LEFT JOIN (TRF_BASE_RCA)
+LOAD * RESIDENT META_LISTING;
+DROP TABLE META_LISTING;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
     9. UNIFICAÇÃO - UM ÚNICO CAMPO "Meta", "ValorPedidoLiquido" e
        "ValorFaturadoLiquido"
        Cada linha de TRF_BASE_RCA só pode ter batido em UM dos joins de
        meta (indicadores mutuamente exclusivos por ClasseIndicador/
        TipoIndicador/Indicador), então Alt() pega o primeiro valor não-nulo
        entre eles - sem risco de somar meta errada. O mesmo vale para
-       ValorPedidoLiquido/ValorFaturadoLiquido, que agora têm duas
-       origens possíveis (REALIZADO_SECAO ou Mix Minimo).
+       ValorPedidoLiquido/ValorFaturadoLiquido, que agora têm três
+       origens possíveis (REALIZADO_SECAO, Mix Minimo ou Listing
+       Iniciativas).
 
 //////////////////////////////////////////////////////////////////////////*/
 TRF_BASE_RCA_FINAL:
 NoConcatenate
 LOAD
     *,
-    Alt(MetaSecaoFat, MetaDepFat, MetaDepPos, MetaPlatinumPoint, MetaEscolhaCerta, MetaSecaoFatGilletteTri, MetaMix) AS Meta,
-    Alt(ValorPedidoLiquido, ValorPedidoLiquidoMix)     AS ValorPedidoLiquidoFinal,
-    Alt(ValorFaturadoLiquido, ValorFaturadoLiquidoMix) AS ValorFaturadoLiquidoFinal
+    Alt(MetaSecaoFat, MetaDepFat, MetaDepPos, MetaPlatinumPoint, MetaEscolhaCerta, MetaSecaoFatGilletteTri, MetaMix, MetaListing) AS Meta,
+    Alt(ValorPedidoLiquido, ValorPedidoLiquidoMix, ValorPedidoLiquidoListing)     AS ValorPedidoLiquidoFinal,
+    Alt(ValorFaturadoLiquido, ValorFaturadoLiquidoMix, ValorFaturadoLiquidoListing) AS ValorFaturadoLiquidoFinal
 RESIDENT TRF_BASE_RCA;
 
 DROP FIELD
-    MetaSecaoFat, MetaDepFat, MetaDepPos, MetaPlatinumPoint, MetaEscolhaCerta, MetaSecaoFatGilletteTri, MetaMix,
-    ValorPedidoLiquido, ValorFaturadoLiquido, ValorPedidoLiquidoMix, ValorFaturadoLiquidoMix
+    MetaSecaoFat, MetaDepFat, MetaDepPos, MetaPlatinumPoint, MetaEscolhaCerta, MetaSecaoFatGilletteTri, MetaMix, MetaListing,
+    ValorPedidoLiquido, ValorFaturadoLiquido, ValorPedidoLiquidoMix, ValorFaturadoLiquidoMix, ValorPedidoLiquidoListing, ValorFaturadoLiquidoListing
 FROM TRF_BASE_RCA_FINAL;
 
 DROP TABLE TRF_BASE_RCA;

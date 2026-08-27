@@ -39,8 +39,9 @@ Destino final dos QVDs transformados:
 4. **Fato Vendas Trimestre Fixo** (Seção + Departamento) — consolida os 3
    meses do trimestre atual.
 5. **Fato Vendas Mês Atual** (Seção + Departamento + RCA) — inclui
-   Positivação de Clientes e o cálculo completo de **Mix Mínimo** (seção
-   7 do script, ver item 4 abaixo).
+   Positivação de Clientes, o cálculo completo de **Mix Mínimo** (seção
+   7 do script, ver item 4 abaixo) e de **Listing Iniciativas - 100%
+   Carteira** (seção 8, ver item 4.1 abaixo).
 6. **Escolha Certa** e **Platinum Point** (mês atual) — QVDs de KPI por
    RCA.
 7. **Metas P&G** — lê `METAS_AAAA-MMM.xlsx` (abas `RCA_SEC`, `RCA_DEP`,
@@ -73,11 +74,11 @@ Destino final dos QVDs transformados:
 | Regra de devolução (Gillette e Mensal) | Sim — blocos RCA_DEVOL e RCA_DEVOL_RANK                    |
 | Mix Mínimo Contrato                    | Sim — seção 7 completa (ver item 4)                        |
 | Escolha Certa Especial (R$20/positivação, só RCA) | **Parcial** — o script gera o KPI `FAIXA ESCOLHA CERTA` (soma de `QTD_ESCOLHA_CERTA` por faixa), mas o cálculo do valor R$20 por positivação não aparece neste `.QVS`. Verificar se é feito em outra camada (dashboard/expressão) ou está faltando. |
-| Indicador Listing                      | **Não encontrado.** Só existe uma menção lateral em comentário ("...`ClasseIndicador='MANUAL'` com Listing Iniciativas") sugerindo que compartilha namespace de chave com Mix Mínimo, mas nenhum bloco de carga para Listing foi localizado. |
+| Indicador Listing (`LISTING INICIATIVAS--100% CARTEIRA`) | **Sim (implementado e ligado ao TRF_BASE_RCA em 2026-08-26)** — seção 8 do script (cálculo) + seções 3.2/8.2 (Realizado/Meta ligados à base unificada), ver item 4.1 abaixo. Regra: cliente compra TODOS os produtos da aba `LISTING_PRODUTOS` do seu `RAMO`, cada produto exige qtd mínima em CAIXAS; RCA só ganha se 100% da carteira completar. Validado rodando no Qlik Sense. |
 | Campanha PET (Supervisor Suzy 240+340→240340) | **Não encontrado neste arquivo.** Nem o indicador PET nem o código fictício 240340 aparecem no script lido. Pode estar em outro `.qvs`/tab do projeto Qlik. |
 | Supervisor Gerson (73+74→7374)         | **Não encontrado neste arquivo.** Mesma observação acima. |
 
-> Ação sugerida: confirmar com quem mantém o app Qlik se PET, Listing e os
+> Ação sugerida: confirmar com quem mantém o app Qlik se PET e os
 > supervisores fictícios (7374/240340) vivem em outro script/tab antes de
 > assumir que estão faltando.
 
@@ -108,6 +109,74 @@ QVD final: `FATO_MIXMINIMO_RCA_MES_AAAA_MM.qvd`. Esse mesmo QVD alimenta
 tanto o Realizado quanto a Meta do indicador "MIX MINIMO" na montagem de
 `TRF_BASE_RCA` (é ligado duas vezes, com chaves `_RealizadoMix`/`_MetaMix`
 separadas).
+
+## 4.1 Listing Iniciativas - 100% Carteira — como funciona no script (seção 8, logo após o Mix Mínimo)
+
+Regra: cliente principal precisa comprar **todos** os produtos da aba
+`LISTING_PRODUTOS` que pertencem ao seu **Ramo** (Ramo do produto vs.
+Ramo do cliente, este último vindo da aba `MIX_MIN`), cada produto
+exigindo uma quantidade mínima em **caixas** (`QTDMIN_CX`). RCA só ganha
+se **100% da carteira** (todos os seus clientes principais) completar —
+regra tudo-ou-nada, igual ao Mix Mínimo.
+
+Headers reais confirmados na planilha `CAMPANHAS_AAAA_MM.xlsx`:
+- `MIX_MIN`: `DATA, COD_SUP, COD_RCA, CODCLIPRINC, CLASSE, RAMO, CATEGORIA, OBJETIVO`
+- `LISTING_PRODUTOS`: `DATA, COD_PRODUTO, NOMEPRODUTO, RAMO, QTDMIN_CX`
+
+Passo a passo (nomes de tabela no script, seção 8.1 a 8.7):
+1. `LISTING_PARTICIPANTES` — Cliente Principal × RCA × Ramo, mesma base
+   de participantes da aba `MIX_MIN` (reload minimalista — só os 3
+   campos necessários, já que `TRF_MIX_MIN` da seção 7 não preserva o
+   campo `Ramo` até aqui).
+2. `TRF_LISTING_PRODUTOS` — Produto × Ramo × QtdMinCx, vindo da aba
+   `LISTING_PRODUTOS`.
+3. `LISTING_ELEGIVEL` — join Cliente×Produto por Ramo (todo cliente
+   pareado com todos os produtos obrigatórios do próprio ramo).
+4. `TEMP_VENDAS_LISTING` → `COMPRA_CLIENTE_PRODUTO_LISTING` — quantidade
+   em **caixas** realmente comprada por Cliente Principal + Produto (só
+   conta valor > 0). Usa `QtdCaixaPedidoLiquido`/`QtdCaixaFaturadoLiquido`
+   de `TMP_VENDAS` (não as quantidades em unidades, usadas pelo Mix
+   Mínimo) — decisão confirmada com o usuário, já que `QTDMIN_CX` é
+   literalmente "quantidade mínima de caixas".
+5. `LISTING_PRODUTO_FLAG` — produto positivado se
+   `QtdCaixaComprada >= QtdMinCx`.
+6. `LISTING_CLIENTE` — cliente completou a lista se `Min()` de todos os
+   flags de produto do seu Ramo = 1 (um produto faltando já derruba).
+7. `FATO_LISTING_RCA` — `Min()` do flag por cliente agregado por RCA:
+   só fica 1 (100%) se **toda a carteira** do RCA completou.
+
+QVD final: `FATO_LISTING_RCA_MES_AAAA_MM.qvd`, com
+`Indicador='LISTING INICIATIVAS--100% CARTEIRA'`,
+`TipoIndicador='DEPARTAMENTO'`, `ClasseIndicador='MANUAL'`, `Meta=1`
+fixo — mesmo padrão de campos do Mix Mínimo.
+
+> **Atenção ao nome exato do indicador**: a linha de catálogo na aba
+> `INDICADORES` da planilha `CAMPANHAS_AAAA_MM.xlsx` usa literalmente
+> `LISTING INICIATIVAS--100% CARTEIRA` (dois hífens, sem espaço, "100%"
+> colado em "CARTEIRA") — **não** `LISTING INICIATIVAS`. Como a chave
+> composta (`_RealizadoListing`/`_MetaListing`) exige match textual
+> exato do campo `Indicador` contra essa linha do catálogo, usar o nome
+> "limpo" quebraria o join silenciosamente (Meta/Realizado ficariam
+> `Null` sem erro nenhum). Confirmado lendo `CAMPANHAS_2026_08.xlsx`
+> diretamente (aba `INDICADORES`: `CODIGO=3, TIPO=DEPARTAMENTO,
+> CLASSE=MANUAL, PERIODO=MESATUAL`).
+
+**Ligado ao `TRF_BASE_RCA`** (2026-08-26, seções 3.2 e 8.2 do script,
+mesmo padrão do Mix Mínimo):
+- `REALIZADO_LISTING` — lê `FATO_LISTING_RCA_MES_$(vDataCarg).qvd`,
+  chave `_RealizadoListing`, valores renomeados
+  `ValorPedidoLiquidoListing`/`ValorFaturadoLiquidoListing`.
+- `META_LISTING` — mesma fonte, chave `_MetaListing`, valor
+  `MetaListing` (= `Meta`, sempre 1).
+- Etapa 9 (UNIFICAÇÃO) atualizada: `MetaListing` entrou no `Alt()` de
+  `Meta`, `ValorPedidoLiquidoListing`/`ValorFaturadoLiquidoListing`
+  entraram nos `Alt()` de `ValorPedidoLiquidoFinal`/
+  `ValorFaturadoLiquidoFinal`, e todos os campos intermediários foram
+  incluídos no `DROP FIELD` final.
+
+Resultado: "LISTING INICIATIVAS--100% CARTEIRA" agora aparece
+normalmente em `BASE_RCA_REAL_SECAO_DEP_MES_AAAA_MM.qvd`, com Meta e
+Realizado, junto dos demais indicadores.
 
 ## 5. Convenções importantes do script (para não quebrar nada em manutenção)
 
@@ -161,14 +230,33 @@ Nenhuma lógica de negócio, nome de campo ou QVD de saída foi alterado —
 mudanças puramente estruturais/de I/O e de documentação. **Ainda não
 validado rodando no Qlik Cloud** — validar antes de subir para produção.
 
+**2026-08-26 (2ª leva):** Implementado o cálculo do Realizado da campanha
+**Listing Iniciativas--100% Carteira** (seção 8, novo bloco — ver item
+4.1). QVD gerado: `FATO_LISTING_RCA_MES_AAAA_MM.qvd`. Validado rodando
+no Qlik Sense (script completo, sem erros).
+
+**2026-08-26 (3ª leva):** Ligado o `FATO_LISTING_RCA` ao encadeamento de
+`LEFT JOIN`s de `TRF_BASE_RCA` (novas seções 3.2 `REALIZADO_LISTING` e
+8.2 `META_LISTING`, mesmo padrão do Mix Mínimo) — Listing Iniciativas
+agora aparece na tabela unificada `BASE_RCA_REAL_SECAO_DEP_MES_AAAA_MM.qvd`
+junto com Meta e Realizado. Corrigido também um mismatch de nome:
+o valor correto do campo `Indicador` é `LISTING INICIATIVAS--100%
+CARTEIRA` (conforme a linha de catálogo real na aba `INDICADORES`), não
+`LISTING INICIATIVAS` — usar o nome errado quebraria o join
+silenciosamente. **Ainda não validado no Qlik Cloud após esta ligação.**
+
 ## 7. Pontos em aberto para continuar o projeto
 
-- Confirmar onde vivem os indicadores **PET**, **Listing** e os
-  supervisores fictícios **Gerson (7374)** / **Suzy (240340)** — não
-  estão neste `.QVS`.
+- Confirmar onde vivem os indicadores **PET** e os supervisores
+  fictícios **Gerson (7374)** / **Suzy (240340)** — não estão neste
+  `.QVS`.
 - Confirmar se o valor de R$20 por positivação do **Escolha Certa
   Especial** é calculado em algum lugar (script ou app Qlik) — não
   localizado aqui.
+- Validar no Qlik Sense/Cloud a ligação do Listing Iniciativas ao
+  `TRF_BASE_RCA` (seções 3.2/8.2) — conferir se o indicador aparece
+  corretamente em `BASE_RCA_REAL_SECAO_DEP_MES_AAAA_MM.qvd` com
+  Meta=1 e Realizado 0/1 por RCA.
 - O script assume `Today()` como referência de mês/trimestre em ~10
   pontos diferentes — se for necessário reprocessar meses fechados,
   vale adicionar parametrização.
