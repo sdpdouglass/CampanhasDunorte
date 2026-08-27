@@ -41,7 +41,35 @@ integralmente antes da próxima:
 3. **PREM_RANK_GILLETE** — ranking de prêmio por posição/grupo (Gillette
    Trimestral) + mapeamento supervisor→grupo de rank.
 4. **Fato Vendas Trimestre Fixo** (Seção + Departamento) — consolida os 3
-   meses do trimestre atual.
+   meses do trimestre calendário atual (T1-T4, alinhado ao trimestre
+   civil).
+4.1. **Fato Vendas Trimestre Móvel** (Seção + Departamento + Devolução
+   RCA + Faturamento RCA + Positivação Seção/Departamento) — mesma
+   dimensões/medidas do transformador de Vendas Mês Atual, mas somadas
+   sobre uma **janela móvel de 3 meses** (mês atual + 2 anteriores,
+   recalculada todo mês, diferente do Trimestre Fixo). Usa
+   `AddMonths(MonthStart(Today()), offset)` para tratar corretamente a
+   virada de ano (ex: Jan/2026 → janela Nov/2025-Jan/2026). Não inclui
+   Mix Mínimo/Listing (indicadores de campanha mensal, não agregação de
+   vendas).
+
+   A extração bruta (`TMP_VENDAS_TRIMESTRE_MOVEL`) carrega o mesmo
+   conjunto completo de campos do `TMP_VENDAS` do Mês Atual (`Cod
+   Cliente Principal` via `ApplyMap`, `Cod Produto`, todas as
+   quantidades em unidade/caixa de pedido e faturado) - ajustado pelo
+   usuário em 2026-08-27 para ficar disponível para uso futuro (ex: um
+   Mix Mínimo/Listing ou indicador a nível de produto sobre a janela
+   móvel), mesmo que as 6 agregações atuais (itens 3-6 do bloco) só
+   usem um subconjunto desses campos por enquanto.
+
+   QVDs: `FATO_VENDAS_SECAO_TRIMESTRE_MOVEL_AAAA_MM.qvd`,
+   `FATO_VENDAS_DEPARTAMENTO_TRIMESTRE_MOVEL_AAAA_MM.qvd`,
+   `FATO_DEVOLUCAO_RCA_TRIMESTRE_MOVEL_AAAA_MM.qvd`,
+   `FATO_FATURAMENTO_RCA_TRIMESTRE_MOVEL_AAAA_MM.qvd`,
+   `FATO_POSITIVACAO_SECAO_TRIMESTRE_MOVEL_AAAA_MM.qvd`,
+   `FATO_POSITIVACAO_DEPARTAMENTO_TRIMESTRE_MOVEL_AAAA_MM.qvd`.
+   Adicionado em 2026-08-27 — **ainda não ligado ao `TRF_BASE_RCA`** (ver
+   Pontos em aberto).
 5. **Fato Vendas Mês Atual** (Seção + Departamento + RCA) — inclui
    Positivação de Clientes, o cálculo completo de **Mix Mínimo** (seção
    7 do script, ver item 4 abaixo) e de **Listing Iniciativas - 100%
@@ -286,6 +314,14 @@ Carregamento é só documentação (nenhum STORE novo, por decisão do
 usuário). **Validado rodando no Qlik Sense — script completo, sem
 erros, valores batendo com a versão anterior.**
 
+**2026-08-27 (2ª leva):** Criado o transformador **Vendas Trimestre
+Móvel** (aba Transformação, logo após o Trimestre Fixo) — mesmas 6
+saídas do transformador de Vendas Mês Atual (Seção, Departamento,
+Devolução RCA, Faturamento RCA, Positivação Seção, Positivação
+Departamento), somadas sobre a janela móvel de 3 meses (mês atual + 2
+anteriores). Ver item 4.1 da seção 2. **Ainda não validado no Qlik e
+ainda não ligado ao `TRF_BASE_RCA`** — ver Pontos em aberto.
+
 ## 7. Pontos em aberto para continuar o projeto
 
 - Confirmar onde vivem os indicadores **PET** e os supervisores
@@ -294,6 +330,16 @@ erros, valores batendo com a versão anterior.**
 - Confirmar se o valor de R$20 por positivação do **Escolha Certa
   Especial** é calculado em algum lugar (script ou app Qlik) — não
   localizado aqui.
+- Validar no Qlik Sense/Cloud o novo transformador **Vendas Trimestre
+  Móvel** (reload completo, conferir os 6 QVDs gerados).
+- **Vendas Trimestre Móvel ainda não está ligado ao `TRF_BASE_RCA`** —
+  hoje só existe como transformador (aba Transformação). Para aparecer
+  na tabela unificada do dashboard, precisaria: (1) uma linha de
+  catálogo com `PERIODO='TRIMESTRE MOVEL'` na aba `INDICADORES` da
+  planilha CAMPANHAS (mesmo cuidado que tivemos com o nome exato do
+  Listing Iniciativas), e (2) mais um `CONCATENATE` na montagem de
+  `REALIZADO_SECAO` (Modelagem), igual ao que já existe para Trimestre
+  Fixo e Mês Atual.
 - O script assume `Today()` como referência de mês/trimestre em ~10
   pontos diferentes — se for necessário reprocessar meses fechados,
   vale adicionar parametrização.

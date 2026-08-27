@@ -292,6 +292,295 @@ ELSE
 ENDIF
 
 ///////////////////////////////////////////////////////////////////////////
+// GERAÇÃO DE QVDs DO TRIMESTRE MÓVEL - FATO VENDAS POR SEÇÃO, DEPARTAMENTO,
+// DEVOLUÇÃO RCA, FATURAMENTO RCA E POSITIVAÇÃO (SEÇÃO + DEPARTAMENTO)
+// Mesmas dimensões e medidas do transformador de Vendas Mês Atual (ver
+// bloco "1. CONFIGURAÇÃO E VARIÁVEIS" logo abaixo), mas somadas sobre uma
+// JANELA MÓVEL de 3 meses = mês atual + 2 meses anteriores (diferente do
+// Trimestre Fixo acima, que usa o trimestre calendário T1-T4). Mix Mínimo
+// e Listing Iniciativas ficam de fora de propósito - são indicadores de
+// campanha mensal (dependem da planilha CAMPANHAS do mês), não agregações
+// de vendas.
+///////////////////////////////////////////////////////////////////////////
+
+
+///////////////////////////////////////////////////////////////////////////
+// 1. CONFIGURAÇÃO E VARIÁVEIS
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigem  = '$(vPathVendasMes)';
+SET vPathDestino = '$(vPathCampanhas)';
+
+LET vAno      = Year(Today());
+LET vMesAtual = Num(Month(Today()), '00');
+
+// Nomes dos QVDs finais
+LET vNomeArquivoSecaoMovel               = 'FATO_VENDAS_SECAO_TRIMESTRE_MOVEL_$(vAno)_$(vMesAtual).qvd';
+LET vNomeArquivoDepartamentoMovel        = 'FATO_VENDAS_DEPARTAMENTO_TRIMESTRE_MOVEL_$(vAno)_$(vMesAtual).qvd';
+LET vNomeArquivoDevolucaoRcaMovel        = 'FATO_DEVOLUCAO_RCA_TRIMESTRE_MOVEL_$(vAno)_$(vMesAtual).qvd';
+LET vNomeArquivoFaturamentoRcaMovel      = 'FATO_FATURAMENTO_RCA_TRIMESTRE_MOVEL_$(vAno)_$(vMesAtual).qvd';
+LET vNomeArquivoPositivacaoSecaoMovel        = 'FATO_POSITIVACAO_SECAO_TRIMESTRE_MOVEL_$(vAno)_$(vMesAtual).qvd';
+LET vNomeArquivoPositivacaoDepartamentoMovel = 'FATO_POSITIVACAO_DEPARTAMENTO_TRIMESTRE_MOVEL_$(vAno)_$(vMesAtual).qvd';
+
+TRACE ==============================================;
+TRACE Gerando QVDs do Trimestre Movel (ref. $(vMesAtual)/$(vAno) - 3 meses);
+TRACE ==============================================;
+
+
+///////////////////////////////////////////////////////////////////////////
+// 2. EXTRAÇÃO BRUTA DOS 3 MESES DA JANELA MÓVEL (sem agregar ainda)
+//    Mês atual + 2 meses anteriores, calculados com AddMonths()/MonthStart()
+//    para tratar corretamente a virada de ano (ex: se hoje é Jan/2026, a
+//    janela é Nov/2025, Dez/2025, Jan/2026). Antes de cada LOAD, verifica
+//    se o QVD do mês já existe com FileSize() - se não existir, pula e
+//    segue com os meses já disponíveis, sem quebrar o script.
+///////////////////////////////////////////////////////////////////////////
+LET vMesesCarregadosMovel    = '';   // guarda quais meses entraram, só para log final
+LET vQtdMesesCarregadosMovel = 0;    // guarda de segurança para a etapa de agregação
+
+FOR vOffsetMesMovel = -2 to 0
+
+    LET vDataMesMovel = AddMonths(MonthStart(Today()), vOffsetMesMovel);
+    LET vAnoMesMovel  = Year(vDataMesMovel);
+    LET vMesTxtMovel  = Num(Month(vDataMesMovel), '00');
+    LET vArquivoMesMovel = '$(vPathOrigem)COMERCIAL_TRATADO_$(vAnoMesMovel)_$(vMesTxtMovel).QVD';
+
+    IF Not IsNull(FileSize('$(vArquivoMesMovel)')) THEN
+
+        TRACE Carregando mes $(vMesTxtMovel)/$(vAnoMesMovel)...;
+
+        TMP_VENDAS_TRIMESTRE_MOVEL:
+        LOAD
+            "Cod RCA",
+            "Cod Cliente",
+            "Cod Secao",
+            "Cod Departamento",
+        	ApplyMap('MAP_CLIENTE_PRINC',"Cod Cliente",'#ND') as "Cod Cliente Principal",
+        	"Cod Produto",
+
+    		"Qtd Vendida"					as QtdPedido,
+    		"Qtd Vendida Liquida"			as QtdPedidoLiquido,
+    		"Qtd Caixa"						as QtdCaixaPedido,
+    		"Qtd Caixa Pedido Liquida"		as QtdCaixaPedidoLiquido,
+
+    		"Qtd Faturada"					as QtdFaturado,
+    		"Qtd Faturada Liquida"			as QtdFaturadoLiquido,
+    		"Qtd Caixa Venda"				as QtdCaixaFaturado,
+    		"Qtd Caixa Faturado Liquida" 	as QtdCaixaFaturadoLiquido,
+
+            "Vlr Tot Pedido",
+            "Vlr Tot Faturado Venda",
+            "Vlr Venda Liquida",
+            "Vlr Tot Faturado Liquido Venda",
+            "Vlr  Devol"
+        FROM [$(vArquivoMesMovel)]
+        (qvd);
+
+        LET vMesesCarregadosMovel    = '$(vMesesCarregadosMovel)' & '$(vMesTxtMovel)/$(vAnoMesMovel) ';
+        LET vQtdMesesCarregadosMovel = vQtdMesesCarregadosMovel + 1;
+
+    ELSE
+
+        TRACE >>> Mes $(vMesTxtMovel)/$(vAnoMesMovel) ainda nao disponivel - ignorado ($(vArquivoMesMovel));
+
+    ENDIF
+
+NEXT vOffsetMesMovel
+
+TRACE Meses efetivamente carregados na janela movel: $(vMesesCarregadosMovel);
+
+
+///////////////////////////////////////////////////////////////////////////
+// 3. AGREGAÇÃO + GERAÇÃO DO QVD POR SEÇÃO
+//    Importante: agregar só depois de concatenar os 3 meses evita linhas
+//    duplicadas para a mesma combinação RCA/Seção que aparece em mais de
+//    um mês da janela. Só executa se pelo menos 1 mês foi carregado.
+///////////////////////////////////////////////////////////////////////////
+IF vQtdMesesCarregadosMovel > 0 THEN
+
+    FATO_VENDAS_SECAO_TRIMESTRE_MOVEL:
+    LOAD
+        "Cod RCA",
+        "Cod Secao",
+        'SECAO'								  AS TipoIndicador,
+        'TRIMESTRE MOVEL'                     AS PeriodoIndicador,
+        'FATURAMENTO'						  AS ClasseIndicador,
+        Sum("Vlr Venda Liquida")              AS ValorPedidoLiquido,
+        Sum("Vlr Tot Faturado Liquido Venda") AS ValorFaturadoLiquido,
+        Sum("Vlr  Devol")                     AS ValorDevolucao
+    RESIDENT TMP_VENDAS_TRIMESTRE_MOVEL
+    GROUP BY
+        "Cod RCA",
+        "Cod Secao";
+
+    STORE FATO_VENDAS_SECAO_TRIMESTRE_MOVEL INTO [$(vPathDestino)$(vNomeArquivoSecaoMovel)] (qvd);
+
+    TRACE QVD de Secao (Trimestre Movel) gerado com sucesso: $(vPathDestino)$(vNomeArquivoSecaoMovel);
+
+    DROP TABLE FATO_VENDAS_SECAO_TRIMESTRE_MOVEL;
+
+
+    ///////////////////////////////////////////////////////////////////////
+    // 4. AGREGAÇÃO + GERAÇÃO DO QVD POR DEPARTAMENTO
+    //    Mesma tabela temporária (TMP_VENDAS_TRIMESTRE_MOVEL), só muda a
+    //    dimensão de agrupamento - evita reler os QVDs mensais de novo.
+    ///////////////////////////////////////////////////////////////////////
+    FATO_VENDAS_DEPARTAMENTO_TRIMESTRE_MOVEL:
+    LOAD
+        "Cod RCA",
+        "Cod Departamento",
+        'DEPARTAMENTO'						  AS TipoIndicador,
+        'TRIMESTRE MOVEL'                     AS PeriodoIndicador,
+        'FATURAMENTO'						  AS ClasseIndicador,
+        Sum("Vlr Venda Liquida")              AS ValorPedidoLiquido,
+        Sum("Vlr Tot Faturado Liquido Venda") AS ValorFaturadoLiquido,
+        Sum("Vlr  Devol")                     AS ValorDevolucao
+    RESIDENT TMP_VENDAS_TRIMESTRE_MOVEL
+    GROUP BY
+        "Cod RCA",
+        "Cod Departamento";
+
+    STORE FATO_VENDAS_DEPARTAMENTO_TRIMESTRE_MOVEL INTO [$(vPathDestino)$(vNomeArquivoDepartamentoMovel)] (qvd);
+
+    TRACE QVD de Departamento (Trimestre Movel) gerado com sucesso: $(vPathDestino)$(vNomeArquivoDepartamentoMovel);
+
+    DROP TABLE FATO_VENDAS_DEPARTAMENTO_TRIMESTRE_MOVEL;
+
+
+    ///////////////////////////////////////////////////////////////////////
+    // 4.1 DEVOLUÇÃO POR RCA (sem quebra por Seção/Departamento)
+    ///////////////////////////////////////////////////////////////////////
+    FATO_DEVOLUCAO_RCA_TRIMESTRE_MOVEL:
+    LOAD
+        "Cod RCA",
+        'RCA'					AS TipoIndicador,
+        'TRIMESTRE MOVEL'      AS PeriodoIndicador,
+        'DEVOLUCAO'				AS ClasseIndicador,
+        Sum("Vlr  Devol")      AS ValorDevolucao
+    RESIDENT TMP_VENDAS_TRIMESTRE_MOVEL
+    GROUP BY
+        "Cod RCA";
+
+    STORE FATO_DEVOLUCAO_RCA_TRIMESTRE_MOVEL INTO [$(vPathDestino)$(vNomeArquivoDevolucaoRcaMovel)] (qvd);
+
+    TRACE QVD de Devolucao por RCA (Trimestre Movel) gerado com sucesso: $(vPathDestino)$(vNomeArquivoDevolucaoRcaMovel);
+
+    DROP TABLE FATO_DEVOLUCAO_RCA_TRIMESTRE_MOVEL;
+
+
+    ///////////////////////////////////////////////////////////////////////
+    // 4.2 FATURAMENTO E PEDIDO POR RCA (sem quebra por Seção/Departamento)
+    ///////////////////////////////////////////////////////////////////////
+    FATO_FATURAMENTO_RCA_TRIMESTRE_MOVEL:
+    LOAD
+        "Cod RCA",
+        'RCA'					AS TipoIndicador,
+        'TRIMESTRE MOVEL'      AS PeriodoIndicador,
+        'FATURAMENTO'			AS ClasseIndicador,
+        Sum("Vlr Tot Pedido")         AS ValorPedido,
+        Sum("Vlr Tot Faturado Venda") AS ValorFaturado
+    RESIDENT TMP_VENDAS_TRIMESTRE_MOVEL
+    GROUP BY
+        "Cod RCA";
+
+    STORE FATO_FATURAMENTO_RCA_TRIMESTRE_MOVEL INTO [$(vPathDestino)$(vNomeArquivoFaturamentoRcaMovel)] (qvd);
+
+    TRACE QVD de Faturamento por RCA (Trimestre Movel) gerado com sucesso: $(vPathDestino)$(vNomeArquivoFaturamentoRcaMovel);
+
+    DROP TABLE FATO_FATURAMENTO_RCA_TRIMESTRE_MOVEL;
+
+
+    ///////////////////////////////////////////////////////////////////////
+    // 5. POSITIVAÇÃO DE CLIENTES POR SEÇÃO
+    //    Regra igual ao Mês Atual: soma o pedido/faturado do CLIENTE
+    //    (não Cliente Principal) dentro de cada RCA+Seção ao longo dos 3
+    //    meses da janela - se o total for > 0, conta como "positivado".
+    ///////////////////////////////////////////////////////////////////////
+    CLIENTE_SECAO_TEMP_MOVEL:
+    LOAD
+        "Cod RCA",
+        "Cod Secao",
+        "Cod Cliente",
+        If(Sum("Vlr Venda Liquida") > 0, 1, 0)              AS FlagPositivadoPedido,
+        If(Sum("Vlr Tot Faturado Liquido Venda") > 0, 1, 0) AS FlagPositivadoFaturado
+    RESIDENT TMP_VENDAS_TRIMESTRE_MOVEL
+    GROUP BY
+        "Cod RCA",
+        "Cod Secao",
+        "Cod Cliente";
+
+	NoConcatenate
+    FATO_POSITIVACAO_SECAO_TRIMESTRE_MOVEL:
+    LOAD
+        "Cod RCA",
+        "Cod Secao",
+        'SECAO'								  AS TipoIndicador,
+        'TRIMESTRE MOVEL'                     AS PeriodoIndicador,
+        'POSITIVACAO'						  AS ClasseIndicador,
+        Sum(FlagPositivadoPedido)     AS QtdClientesPositivadosPedido,
+        Sum(FlagPositivadoFaturado)   AS QtdClientesPositivadosFaturado
+    RESIDENT CLIENTE_SECAO_TEMP_MOVEL
+    GROUP BY
+        "Cod RCA",
+        "Cod Secao";
+
+    DROP TABLE CLIENTE_SECAO_TEMP_MOVEL;
+
+    STORE FATO_POSITIVACAO_SECAO_TRIMESTRE_MOVEL INTO [$(vPathDestino)$(vNomeArquivoPositivacaoSecaoMovel)] (qvd);
+
+    TRACE QVD de Positivacao por Secao (Trimestre Movel) gerado com sucesso: $(vPathDestino)$(vNomeArquivoPositivacaoSecaoMovel);
+
+    DROP TABLE FATO_POSITIVACAO_SECAO_TRIMESTRE_MOVEL;
+
+
+    ///////////////////////////////////////////////////////////////////////
+    // 6. POSITIVAÇÃO DE CLIENTES POR DEPARTAMENTO
+    //    Mesma lógica da seção 5, só troca Secao por Departamento.
+    ///////////////////////////////////////////////////////////////////////
+    CLIENTE_DEPARTAMENTO_TEMP_MOVEL:
+    LOAD
+        "Cod RCA",
+        "Cod Departamento",
+        "Cod Cliente",
+        If(Sum("Vlr Venda Liquida") > 0, 1, 0)              AS FlagPositivadoPedido,
+        If(Sum("Vlr Tot Faturado Liquido Venda") > 0, 1, 0) AS FlagPositivadoFaturado
+    RESIDENT TMP_VENDAS_TRIMESTRE_MOVEL
+    GROUP BY
+        "Cod RCA",
+        "Cod Departamento",
+        "Cod Cliente";
+
+	NoConcatenate
+    FATO_POSITIVACAO_DEPARTAMENTO_TRIMESTRE_MOVEL:
+    LOAD
+        "Cod RCA",
+        "Cod Departamento",
+        'DEPARTAMENTO'				  AS TipoIndicador,
+        'TRIMESTRE MOVEL'             AS PeriodoIndicador,
+        'POSITIVACAO'				  AS ClasseIndicador,
+        Sum(FlagPositivadoPedido)     AS QtdClientesPositivadosPedido,
+        Sum(FlagPositivadoFaturado)   AS QtdClientesPositivadosFaturado
+    RESIDENT CLIENTE_DEPARTAMENTO_TEMP_MOVEL
+    GROUP BY
+        "Cod RCA",
+        "Cod Departamento";
+
+    DROP TABLE CLIENTE_DEPARTAMENTO_TEMP_MOVEL;
+
+    STORE FATO_POSITIVACAO_DEPARTAMENTO_TRIMESTRE_MOVEL INTO [$(vPathDestino)$(vNomeArquivoPositivacaoDepartamentoMovel)] (qvd);
+
+    TRACE QVD de Positivacao por Departamento (Trimestre Movel) gerado com sucesso: $(vPathDestino)$(vNomeArquivoPositivacaoDepartamentoMovel);
+
+    DROP TABLE FATO_POSITIVACAO_DEPARTAMENTO_TRIMESTRE_MOVEL;
+
+    DROP TABLE TMP_VENDAS_TRIMESTRE_MOVEL;
+
+ELSE
+
+    TRACE >>> ATENCAO: nenhum mes da janela movel (ref. $(vMesAtual)/$(vAno)) disponivel ainda. QVDs nao foram gerados.;
+
+ENDIF
+
+///////////////////////////////////////////////////////////////////////////
 // 1. CONFIGURAÇÃO E VARIÁVEIS
 ///////////////////////////////////////////////////////////////////////////
 SET vPathOrigem  = '$(vPathVendasMes)';
