@@ -26,8 +26,12 @@ Fontes de origem:
 Destino final dos QVDs transformados:
 `lib://Carga_Duno/TESTE/TRANSFORMADOR/MES/COMERCIAL/MEGA MARCAS/CAMPANHAS/`
 
-## 2. Ordem de execução (alto nível)
+## 2. Estrutura em 3 camadas (reorganizado em 2026-08-27)
 
+O script tem 3 abas Qlik (`///$tab`), nesta ordem, cada uma rodando
+integralmente antes da próxima:
+
+### Aba "Transformação" — extração/transformação, gera QVDs intermediários
 1. **Mappings de cadastro** (`MAP_SUP`, `MAP_RCA_NOME`, `MAP_RCA_SUP`,
    `MAP_CLIENTE_PRINC`) — carregados uma vez, usados via `ApplyMap()` em
    quase todo o resto do script.
@@ -46,24 +50,45 @@ Destino final dos QVDs transformados:
    RCA.
 7. **Metas P&G** — lê `METAS_AAAA-MMM.xlsx` (abas `RCA_SEC`, `RCA_DEP`,
    `PLATINUM_POINT`, `ESCOLHA_CERTA`) e gera um QVD de meta por aba.
-8. **TRF_BASE_RCA** (montagem vertical) — uma tabela única
+8. **PREM_RCA** — extrai a aba PREM_RCA (Cod RCA, Indicador, Ganho,
+   Faixa) → `TRF_PREM_RCA_AAAA_MM.qvd`.
+9. **RCA_DEVOL** — extrai as 4 faixas de % devolução/repasse por RCA →
+   `TRF_RCA_DEVOL_AAAA_MM.qvd`.
+10. **RCA_DEVOL_RANK** — extrai a faixa máxima de devolução para o
+    ranking Gillette → `TRF_RCA_DEVOL_RANK_AAAA_MM.qvd`.
+
+> Os itens 8-10 ficavam antes intercalados dentro da camada de cálculo
+> (entre `BASE_RCA_INDICADORES_REALIZADO`, o cálculo de Ganho e o
+> Ranking Gillette) — movidos para cá em 2026-08-27, ver Changelog.
+
+### Aba "Modelagem" — onde as bases transformadas se ligam e os cálculos acontecem
+1. **TRF_BASE_RCA** (montagem vertical) — uma tabela única
    Data+RCA+Indicador com Meta e Realizado juntos, feita via uma
    sequência de `LEFT JOIN`s com chaves textuais compostas
-   (`_Meta`, `_MetaDep`, `_MetaPP`, `_MetaEC`, `_MetaMix`...) — cada
-   join usa um nome de campo de valor único para evitar o "bug de chave
-   dupla" (ver seção 5). Resultado: `BASE_RCA_REAL_SECAO_DEP_MES_AAAA_MM.qvd`.
-9. **BASE_RCA_INDICADORES_REALIZADO** — agrega tudo (Base + Escolha
+   (`_Meta`, `_MetaDep`, `_MetaPP`, `_MetaEC`, `_MetaMix`, `_MetaListing`...)
+   — cada join usa um nome de campo de valor único para evitar o "bug de
+   chave dupla" (ver seção 5). Resultado: `BASE_RCA_REAL_SECAO_DEP_MES_AAAA_MM.qvd`.
+2. **BASE_RCA_INDICADORES_REALIZADO** — agrega tudo (Base + Escolha
    Certa + Platinum Point) no grão Data+RCA+Indicador, calcula
    `PercAtingimentoPedido`/`PercAtingimentoFaturado`.
-10. **Premiação RCA** (`PREM_RCA`) — cruza faixa de premiação da planilha
-    com o % de atingimento realizado → `GanhoPedido`/`GanhoFaturado`.
-11. **Devolução RCA** (`RCA_DEVOL`) — % de devolução por RCA e faixa de
-    repasse aplicável → `GanhoFinalPedidoRca`/`GanhoFinalFaturadoRca`.
-12. **Ranking Gillette Trimestral** (`RCA_DEVOL_RANK` +
-    `PREM_RANK_GILLETTE`) — só entram no ranking RCAs com ≥100% de
-    atingimento; RCAs com devolução acima da faixa máxima permitida são
-    zerados no ranking (mas não no ganho por indicador). Resultado final:
-    `PREMIACAO_GILLETTE_TRI`.
+3. **Cálculo do Ganho por RCA/Indicador** — lê o QVD do PREM_RCA (aba
+   Transformação), cruza faixa de premiação com o % de atingimento
+   realizado → `GanhoPedido`/`GanhoFaturado`.
+4. **% Devolução RCA + Faixa de Repasse + Ganho Final** — lê os QVDs do
+   RCA_DEVOL (aba Transformação), calcula % devolução, faixa de repasse
+   aplicável e `GanhoFinalPedidoRca`/`GanhoFinalFaturadoRca`.
+5. **Ranking Gillette Trimestral** — lê os QVDs do RCA_DEVOL_RANK e do
+   PREM_RANK_GILLETE (aba Transformação); só entram no ranking RCAs com
+   ≥100% de atingimento; RCAs com devolução acima da faixa máxima
+   permitida são zerados no ranking (mas não no ganho por indicador).
+   Resultado final: `PREMIACAO_GILLETTE_TRI`.
+
+### Aba "Carregamento" — só organização/documentação (sem STORE novo)
+Marca `BASE_RCA_INDICADORES_REALIZADO` (com Ganho) e
+`PREMIACAO_GILLETTE_TRI` como as duas tabelas finais que carregam no
+modelo de dados do app Qlik. Decisão do usuário: essa camada não grava
+nada em QVD — as duas tabelas já são o resultado final da Modelagem e
+ficam residentes, associadas ao restante do modelo.
 
 ## 3. Indicadores implementados no script (x regras de negócio)
 
@@ -243,7 +268,23 @@ junto com Meta e Realizado. Corrigido também um mismatch de nome:
 o valor correto do campo `Indicador` é `LISTING INICIATIVAS--100%
 CARTEIRA` (conforme a linha de catálogo real na aba `INDICADORES`), não
 `LISTING INICIATIVAS` — usar o nome errado quebraria o join
-silenciosamente. **Ainda não validado no Qlik Cloud após esta ligação.**
+silenciosamente. **Validado rodando no Qlik Sense em 2026-08-27
+(junto com a reorganização abaixo) — valores batendo.**
+
+**2026-08-27:** Reorganizado o script inteiro em 3 abas Qlik (`///$tab`)
+— **Transformação**, **Modelagem**, **Carregamento** — ver seção 2.
+Os blocos de extração PREM_RCA, RCA_DEVOL e RCA_DEVOL_RANK, que antes
+ficavam intercalados dentro da camada de cálculo, foram movidos
+(cut+paste puro, sem alterar nenhuma linha de lógica) para o final da
+aba Transformação. Mudança é 100% estrutural — confirmado que os 3
+blocos são autocontidos (variáveis próprias baseadas em `Today()`, sem
+depender de estado deixado por outros blocos) e que seus consumidores
+na Modelagem continuam funcionando porque variáveis Qlik são globais e
+persistem independente de onde o bloco está fisicamente no arquivo,
+desde que Transformação rode inteira antes de Modelagem. Aba
+Carregamento é só documentação (nenhum STORE novo, por decisão do
+usuário). **Validado rodando no Qlik Sense — script completo, sem
+erros, valores batendo com a versão anterior.**
 
 ## 7. Pontos em aberto para continuar o projeto
 
@@ -253,10 +294,6 @@ silenciosamente. **Ainda não validado no Qlik Cloud após esta ligação.**
 - Confirmar se o valor de R$20 por positivação do **Escolha Certa
   Especial** é calculado em algum lugar (script ou app Qlik) — não
   localizado aqui.
-- Validar no Qlik Sense/Cloud a ligação do Listing Iniciativas ao
-  `TRF_BASE_RCA` (seções 3.2/8.2) — conferir se o indicador aparece
-  corretamente em `BASE_RCA_REAL_SECAO_DEP_MES_AAAA_MM.qvd` com
-  Meta=1 e Realizado 0/1 por RCA.
 - O script assume `Today()` como referência de mês/trimestre em ~10
   pontos diferentes — se for necessário reprocessar meses fechados,
   vale adicionar parametrização.

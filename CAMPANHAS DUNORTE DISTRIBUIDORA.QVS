@@ -1,3 +1,4 @@
+///$tab Transformação
 //1. SECAO MAPPING
 MAP_SUP:
 MAPPING
@@ -1253,6 +1254,136 @@ ENDIF
 
 
 ///////////////////////////////////////////////////////////////////////////
+// PARTE 1 - TRANSFORMADOR PREM_RCA (planilha CAMPANHAS)
+// Extrai a aba PREM_RCA (Cod RCA, Indicador, Ganho, Faixa) e salva um QVD
+// mensal. GILLETTE TRIMESTRAL é excluído aqui de propósito - será
+// calculado à parte, com regra própria de trimestre.
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemPrem  = '$(vPathMetasPG)';
+SET vPathDestinoPrem = '$(vPathCampanhas)';
+
+LET vAnoPrem    = Year(Today());
+LET vMesTxtPrem = Num(Month(Today()), '00');
+
+LET vArquivoPrem     = '$(vPathOrigemPrem)CAMPANHAS_$(vAnoPrem)_$(vMesTxtPrem).xlsx';
+LET vNomeArquivoPrem = 'TRF_PREM_RCA_$(vAnoPrem)_$(vMesTxtPrem).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoPrem)')) THEN
+
+    TRACE Carregando PREM_RCA $(vMesTxtPrem)/$(vAnoPrem)...;
+
+    TRF_PREM_RCA:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_RCA                AS CodRca,
+        INDICADOR               AS Indicador,
+        GANHO                   AS Ganho,
+        FAIXA                   AS Faixa
+    FROM [$(vArquivoPrem)]
+    (ooxml, embedded labels, table is PREM_RCA)
+    WHERE INDICADOR <> 'GILLETTE TRIMESTRAL';
+
+    STORE TRF_PREM_RCA INTO [$(vPathDestinoPrem)$(vNomeArquivoPrem)] (qvd);
+
+    TRACE QVD de Premiacao RCA gerado com sucesso: $(vPathDestinoPrem)$(vNomeArquivoPrem);
+
+    DROP TABLE TRF_PREM_RCA;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtPrem)/$(vAnoPrem) ainda nao disponivel ($(vArquivoPrem)). QVD de Premiacao nao foi gerado.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// PARTE 1 - TRANSFORMADOR RCA_DEVOL (planilha CAMPANHAS)
+// Extrai a aba RCA_DEVOL (4 faixas de % devolução + % de repasse do
+// ganho por faixa, específicas de cada RCA) e salva um QVD mensal.
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemDevol  = '$(vPathMetasPG)';
+SET vPathDestinoDevol = '$(vPathCampanhas)';
+
+LET vAnoDevol    = Year(Today());
+LET vMesTxtDevol = Num(Month(Today()), '00');
+
+LET vArquivoDevol     = '$(vPathOrigemDevol)CAMPANHAS_$(vAnoDevol)_$(vMesTxtDevol).xlsx';
+LET vNomeArquivoDevol = 'TRF_RCA_DEVOL_$(vAnoDevol)_$(vMesTxtDevol).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoDevol)')) THEN
+
+    TRACE Carregando RCA_DEVOL $(vMesTxtDevol)/$(vAnoDevol)...;
+
+    TRF_RCA_DEVOL:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_RCA                AS CodRca,
+        FAIXA1                 AS Faixa1,
+        GANHO1                 AS GanhoPerc1,
+        FAIXA2                 AS Faixa2,
+        GANHO2                 AS GanhoPerc2,
+        FAIXA3                 AS Faixa3,
+        GANHO3                 AS GanhoPerc3,
+        FAIXA4                 AS Faixa4,
+        GANHO4                 AS GanhoPerc4
+    FROM [$(vArquivoDevol)]
+    (ooxml, embedded labels, table is RCA_DEVOL);
+
+    STORE TRF_RCA_DEVOL INTO [$(vPathDestinoDevol)$(vNomeArquivoDevol)] (qvd);
+
+    TRACE QVD de Faixas Devolucao RCA gerado com sucesso: $(vPathDestinoDevol)$(vNomeArquivoDevol);
+
+    DROP TABLE TRF_RCA_DEVOL;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtDevol)/$(vAnoDevol) ainda nao disponivel ($(vArquivoDevol)). QVD de Faixas Devolucao nao foi gerado.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// TRANSFORMADOR RCA_DEVOL_RANK (planilha CAMPANHAS)
+// Faixa máxima de % devolução que o RCA pode ter para não ser zerado no
+// ranking do Gillette Trimestral. Colunas D/E da planilha são só texto
+// descritivo (nome do RCA, nome do Supervisor) - não carregadas aqui.
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemDevolRank  = '$(vPathMetasPG)';
+SET vPathDestinoDevolRank = '$(vPathCampanhas)';
+
+LET vAnoDevolRank    = Year(Today());
+LET vMesTxtDevolRank = Num(Month(Today()), '00');
+
+LET vArquivoDevolRank     = '$(vPathOrigemDevolRank)CAMPANHAS_$(vAnoDevolRank)_$(vMesTxtDevolRank).xlsx';
+LET vNomeArquivoDevolRank = 'TRF_RCA_DEVOL_RANK_$(vAnoDevolRank)_$(vMesTxtDevolRank).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoDevolRank)')) THEN
+
+    TRACE Carregando RCA_DEVOL_RANK $(vMesTxtDevolRank)/$(vAnoDevolRank)...;
+
+    TRF_RCA_DEVOL_RANK:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_RCA                AS CodRca,
+        FAIXA                  AS Faixa
+    FROM [$(vArquivoDevolRank)]
+    (ooxml, embedded labels, table is RCA_DEVOL_RANK);
+
+    STORE TRF_RCA_DEVOL_RANK INTO [$(vPathDestinoDevolRank)$(vNomeArquivoDevolRank)] (qvd);
+
+    TRACE QVD de Faixa Devolucao Rank Gillette gerado com sucesso: $(vPathDestinoDevolRank)$(vNomeArquivoDevolRank);
+
+    DROP TABLE TRF_RCA_DEVOL_RANK;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtDevolRank)/$(vAnoDevolRank) ainda nao disponivel ($(vArquivoDevolRank)). QVD de Faixa Devolucao Rank nao foi gerado.;
+
+ENDIF
+
+
+///$tab Modelagem
+///////////////////////////////////////////////////////////////////////////
 // TRF_BASE_RCA + REALIZADO (TRIMESTRE FIXO + MES) + META - CAMPANHA GILLETTE
 // Cada bloco de Meta usa um campo de VALOR com nome único (MetaSecaoFat /
 // MetaDepFat / MetaDepPos / MetaPlatinumPoint / MetaEscolhaCerta /
@@ -1783,49 +1914,6 @@ DROP TABLE TEMP_BASE_INDICADORES;
 
 
 ///////////////////////////////////////////////////////////////////////////
-// PARTE 1 - TRANSFORMADOR PREM_RCA (planilha CAMPANHAS)
-// Extrai a aba PREM_RCA (Cod RCA, Indicador, Ganho, Faixa) e salva um QVD
-// mensal. GILLETTE TRIMESTRAL é excluído aqui de propósito - será
-// calculado à parte, com regra própria de trimestre.
-///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemPrem  = '$(vPathMetasPG)';
-SET vPathDestinoPrem = '$(vPathCampanhas)';
-
-LET vAnoPrem    = Year(Today());
-LET vMesTxtPrem = Num(Month(Today()), '00');
-
-LET vArquivoPrem     = '$(vPathOrigemPrem)CAMPANHAS_$(vAnoPrem)_$(vMesTxtPrem).xlsx';
-LET vNomeArquivoPrem = 'TRF_PREM_RCA_$(vAnoPrem)_$(vMesTxtPrem).qvd';
-
-IF Not IsNull(FileSize('$(vArquivoPrem)')) THEN
-
-    TRACE Carregando PREM_RCA $(vMesTxtPrem)/$(vAnoPrem)...;
-
-    TRF_PREM_RCA:
-    LOAD
-        Date(MonthStart(DATA)) AS DATA,
-        COD_RCA                AS CodRca,
-        INDICADOR               AS Indicador,
-        GANHO                   AS Ganho,
-        FAIXA                   AS Faixa
-    FROM [$(vArquivoPrem)]
-    (ooxml, embedded labels, table is PREM_RCA)
-    WHERE INDICADOR <> 'GILLETTE TRIMESTRAL';
-
-    STORE TRF_PREM_RCA INTO [$(vPathDestinoPrem)$(vNomeArquivoPrem)] (qvd);
-
-    TRACE QVD de Premiacao RCA gerado com sucesso: $(vPathDestinoPrem)$(vNomeArquivoPrem);
-
-    DROP TABLE TRF_PREM_RCA;
-
-ELSE
-
-    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtPrem)/$(vAnoPrem) ainda nao disponivel ($(vArquivoPrem)). QVD de Premiacao nao foi gerado.;
-
-ENDIF
-
-
-///////////////////////////////////////////////////////////////////////////
 // PARTE 2 - CÁLCULO DO GANHO POR RCA/INDICADOR
 // Junta a premiação (Faixa/Ganho) com BASE_RCA_INDICADORES_REALIZADO
 // (já em memória, calculado na seção anterior do script) e calcula duas
@@ -1868,52 +1956,6 @@ RESIDENT BASE_RCA_INDICADORES_REALIZADO;
 
 DROP TABLE BASE_RCA_INDICADORES_REALIZADO;
 RENAME TABLE BASE_RCA_INDICADORES_REALIZADO_GANHO TO BASE_RCA_INDICADORES_REALIZADO;
-
-
-///////////////////////////////////////////////////////////////////////////
-// PARTE 1 - TRANSFORMADOR RCA_DEVOL (planilha CAMPANHAS)
-// Extrai a aba RCA_DEVOL (4 faixas de % devolução + % de repasse do
-// ganho por faixa, específicas de cada RCA) e salva um QVD mensal.
-///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemDevol  = '$(vPathMetasPG)';
-SET vPathDestinoDevol = '$(vPathCampanhas)';
-
-LET vAnoDevol    = Year(Today());
-LET vMesTxtDevol = Num(Month(Today()), '00');
-
-LET vArquivoDevol     = '$(vPathOrigemDevol)CAMPANHAS_$(vAnoDevol)_$(vMesTxtDevol).xlsx';
-LET vNomeArquivoDevol = 'TRF_RCA_DEVOL_$(vAnoDevol)_$(vMesTxtDevol).qvd';
-
-IF Not IsNull(FileSize('$(vArquivoDevol)')) THEN
-
-    TRACE Carregando RCA_DEVOL $(vMesTxtDevol)/$(vAnoDevol)...;
-
-    TRF_RCA_DEVOL:
-    LOAD
-        Date(MonthStart(DATA)) AS DATA,
-        COD_RCA                AS CodRca,
-        FAIXA1                 AS Faixa1,
-        GANHO1                 AS GanhoPerc1,
-        FAIXA2                 AS Faixa2,
-        GANHO2                 AS GanhoPerc2,
-        FAIXA3                 AS Faixa3,
-        GANHO3                 AS GanhoPerc3,
-        FAIXA4                 AS Faixa4,
-        GANHO4                 AS GanhoPerc4
-    FROM [$(vArquivoDevol)]
-    (ooxml, embedded labels, table is RCA_DEVOL);
-
-    STORE TRF_RCA_DEVOL INTO [$(vPathDestinoDevol)$(vNomeArquivoDevol)] (qvd);
-
-    TRACE QVD de Faixas Devolucao RCA gerado com sucesso: $(vPathDestinoDevol)$(vNomeArquivoDevol);
-
-    DROP TABLE TRF_RCA_DEVOL;
-
-ELSE
-
-    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtDevol)/$(vAnoDevol) ainda nao disponivel ($(vArquivoDevol)). QVD de Faixas Devolucao nao foi gerado.;
-
-ENDIF
 
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2024,46 +2066,6 @@ LOAD
 RESIDENT TEMP_GANHOS_RCA;
 
 DROP TABLE TEMP_GANHOS_RCA;
-
-
-///////////////////////////////////////////////////////////////////////////
-// TRANSFORMADOR RCA_DEVOL_RANK (planilha CAMPANHAS)
-// Faixa máxima de % devolução que o RCA pode ter para não ser zerado no
-// ranking do Gillette Trimestral. Colunas D/E da planilha são só texto
-// descritivo (nome do RCA, nome do Supervisor) - não carregadas aqui.
-///////////////////////////////////////////////////////////////////////////
-SET vPathOrigemDevolRank  = '$(vPathMetasPG)';
-SET vPathDestinoDevolRank = '$(vPathCampanhas)';
-
-LET vAnoDevolRank    = Year(Today());
-LET vMesTxtDevolRank = Num(Month(Today()), '00');
-
-LET vArquivoDevolRank     = '$(vPathOrigemDevolRank)CAMPANHAS_$(vAnoDevolRank)_$(vMesTxtDevolRank).xlsx';
-LET vNomeArquivoDevolRank = 'TRF_RCA_DEVOL_RANK_$(vAnoDevolRank)_$(vMesTxtDevolRank).qvd';
-
-IF Not IsNull(FileSize('$(vArquivoDevolRank)')) THEN
-
-    TRACE Carregando RCA_DEVOL_RANK $(vMesTxtDevolRank)/$(vAnoDevolRank)...;
-
-    TRF_RCA_DEVOL_RANK:
-    LOAD
-        Date(MonthStart(DATA)) AS DATA,
-        COD_RCA                AS CodRca,
-        FAIXA                  AS Faixa
-    FROM [$(vArquivoDevolRank)]
-    (ooxml, embedded labels, table is RCA_DEVOL_RANK);
-
-    STORE TRF_RCA_DEVOL_RANK INTO [$(vPathDestinoDevolRank)$(vNomeArquivoDevolRank)] (qvd);
-
-    TRACE QVD de Faixa Devolucao Rank Gillette gerado com sucesso: $(vPathDestinoDevolRank)$(vNomeArquivoDevolRank);
-
-    DROP TABLE TRF_RCA_DEVOL_RANK;
-
-ELSE
-
-    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtDevolRank)/$(vAnoDevolRank) ainda nao disponivel ($(vArquivoDevolRank)). QVD de Faixa Devolucao Rank nao foi gerado.;
-
-ENDIF
 
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2223,6 +2225,25 @@ LOAD
 RESIDENT BASE_GILLETTE_TRI;
 
 DROP TABLE BASE_GILLETTE_TRI;
+
+
+///$tab Carregamento
+///////////////////////////////////////////////////////////////////////////
+// CARREGAMENTO - TABELAS FINAIS DO MODELO DE DADOS
+// Camada só de organização/documentação - nenhuma tabela é gravada em
+// QVD aqui, nenhuma lógica é executada. As duas tabelas abaixo, já
+// produzidas na aba Modelagem, permanecem residentes e são o que
+// efetivamente carrega no modelo de dados do app Qlik (associadas
+// entre si e com as demais tabelas via os campos em comum, ex: CodRca):
+//
+//   - BASE_RCA_INDICADORES_REALIZADO: Realizado + Meta + Ganho por
+//     RCA/Indicador/Data (grão: DATA + CodRca + Indicador).
+//   - PREMIACAO_GILLETTE_TRI: Realizado + ranking + prêmio da campanha
+//     Gillette Trimestral por RCA (grão: CodRca).
+///////////////////////////////////////////////////////////////////////////
+TRACE ==============================================;
+TRACE Carga do modelo de dados concluida.;
+TRACE ==============================================;
 
 
 
