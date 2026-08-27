@@ -319,8 +319,13 @@ Móvel** (aba Transformação, logo após o Trimestre Fixo) — mesmas 6
 saídas do transformador de Vendas Mês Atual (Seção, Departamento,
 Devolução RCA, Faturamento RCA, Positivação Seção, Positivação
 Departamento), somadas sobre a janela móvel de 3 meses (mês atual + 2
-anteriores). Ver item 4.1 da seção 2. **Ainda não validado no Qlik e
-ainda não ligado ao `TRF_BASE_RCA`** — ver Pontos em aberto.
+anteriores). Ver item 4.1 da seção 2. A extração bruta foi depois
+ajustada pelo usuário para carregar o conjunto completo de campos do
+Mês Atual (`Cod Cliente Principal`, `Cod Produto`, quantidades
+unidade/caixa) para uso futuro. **Validado rodando no Qlik Sense —
+script editor carregou normalmente, sem erros, com as 3 abas
+(Transformação/Modelagem/Carregamento) reconhecidas corretamente.**
+Ainda não ligado ao `TRF_BASE_RCA` — ver Pontos em aberto.
 
 ## 7. Pontos em aberto para continuar o projeto
 
@@ -330,8 +335,6 @@ ainda não ligado ao `TRF_BASE_RCA`** — ver Pontos em aberto.
 - Confirmar se o valor de R$20 por positivação do **Escolha Certa
   Especial** é calculado em algum lugar (script ou app Qlik) — não
   localizado aqui.
-- Validar no Qlik Sense/Cloud o novo transformador **Vendas Trimestre
-  Móvel** (reload completo, conferir os 6 QVDs gerados).
 - **Vendas Trimestre Móvel ainda não está ligado ao `TRF_BASE_RCA`** —
   hoje só existe como transformador (aba Transformação). Para aparecer
   na tabela unificada do dashboard, precisaria: (1) uma linha de
