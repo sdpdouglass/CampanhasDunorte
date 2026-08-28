@@ -307,6 +307,7 @@ TRACE Meses efetivamente carregados no trimestre: $(vMesesCarregados);
 ///////////////////////////////////////////////////////////////////////////
 IF vQtdMesesCarregados > 0 THEN
 
+    NoConcatenate
     FATO_VENDAS_TRIMESTRE_FIXO_SECAO:
     LOAD
         "Cod RCA",
@@ -334,6 +335,7 @@ IF vQtdMesesCarregados > 0 THEN
     //    Mesma tabela temporária (TMP_VENDAS), só muda a dimensão de
     //    agrupamento - evita reler os QVDs mensais de novo.
     ///////////////////////////////////////////////////////////////////////
+    NoConcatenate
     FATO_VENDAS_TRIMESTRE_FIXO_DEPARTAMENTO:
     LOAD
         "Cod RCA",
@@ -469,6 +471,7 @@ TRACE Meses efetivamente carregados na janela movel: $(vMesesCarregadosMovel);
 ///////////////////////////////////////////////////////////////////////////
 IF vQtdMesesCarregadosMovel > 0 THEN
 
+    NoConcatenate
     FATO_VENDAS_SECAO_TRIMESTRE_MOVEL:
     LOAD
         "Cod RCA",
@@ -496,6 +499,7 @@ IF vQtdMesesCarregadosMovel > 0 THEN
     //    Mesma tabela temporária (TMP_VENDAS_TRIMESTRE_MOVEL), só muda a
     //    dimensão de agrupamento - evita reler os QVDs mensais de novo.
     ///////////////////////////////////////////////////////////////////////
+    NoConcatenate
     FATO_VENDAS_DEPARTAMENTO_TRIMESTRE_MOVEL:
     LOAD
         "Cod RCA",
@@ -701,13 +705,13 @@ IF vQtdMesesCarregadosMovel > 0 THEN
             Date(MonthStart(DATA)) AS DATA,
             COD_SUP                AS CodSupervisor,
             COD_RCA                AS CodRca,
-            CODCLIPRINC             AS CodClientePrincipal,
-            COD_FILIAL               AS CodFilial,
-            CLASSE                    AS Classe,
-            RAMO                       AS Ramo,
-            CATEGORIA                   AS Categoria,
-            OBJETIVO                     AS Objetivo,
-            QTDMIN                        AS QtdMin,
+            CODCLIPRINC            AS CodClientePrincipal,
+            COD_FILIAL             AS CodFilial,
+            CLASSE                 AS Classe,
+            RAMO                   AS Ramo,
+            CATEGORIA              AS Categoria,
+            OBJETIVO               AS Objetivo,
+            QTDMIN                 AS QtdMin,
             CODCLIPRINC & '|' & COD_FILIAL AS _ChaveClienteFilial
         FROM [$(vArquivoMix)]
         (ooxml, embedded labels, table is MIX_MIN)
@@ -753,6 +757,7 @@ IF vQtdMesesCarregadosMovel > 0 THEN
         //     continua nao existindo mais nesta aba (ver nota QTDMIN
         //     acima).
         /////////////////////////////////////////////////////////////////////
+        NoConcatenate
         TRF_MIXMIN_PRODUTO_GRUPO:
         LOAD
             CODPROD    AS CodProduto,
@@ -833,9 +838,10 @@ IF vQtdMesesCarregadosMovel > 0 THEN
         //     chave composta, resolvendo o produto ao NomeGrupo correto
         //     da categoria do proprio cliente (ver comentario na 7.2).
         /////////////////////////////////////////////////////////////////////
+        NoConcatenate
         TEMP_VENDAS_MIXMIN:
         LOAD
-            "Cod Produto",
+            "Cod Produto"   as CodProduto,
             "Cod Cliente Principal" & '|' & "Cod Filial" AS _ChaveClienteFilial,
             ApplyMap('MAP_CLIENTE_CATEGORIA', "Cod Cliente Principal" & '|' & "Cod Filial") AS Categoria,
             QtdPedidoLiquido,
@@ -1061,6 +1067,7 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
     /////////////////////////////////////////////////////////////////////////
     // 3. AGREGAÇÃO + GERAÇÃO DO QVD POR SEÇÃO
     /////////////////////////////////////////////////////////////////////////
+    NoConcatenate
     FATO_VENDAS_SECAO:
     LOAD
         "Cod RCA",
@@ -1088,6 +1095,7 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
     //    Mesma tabela temporária (TMP_VENDAS), só muda a dimensão de
     //    agrupamento - evita reler o QVD mensal de novo.
     /////////////////////////////////////////////////////////////////////////
+    NoConcatenate
     FATO_VENDAS_DEPARTAMENTO:
     LOAD
         "Cod RCA",

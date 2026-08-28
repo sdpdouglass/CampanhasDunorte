@@ -1,6 +1,7 @@
 # Mapeamento
 
 ## Dimensões
+
 - Administrador
 - Vendedor
 - Supervisor
@@ -17,6 +18,7 @@
 - Cod Cobrança
 
 ## Metricas
+
 - Faturamento Liquido
 - Pedido Liquido
 - Valor Devolucao
