@@ -87,12 +87,14 @@ DROP TABLE [TRF_BASE_RCA_INDICADORES_$(vAno)_$(vMesAtual)];
 
 
 ///////////////////////////////////////////////////////////////////////////
-// TRANSFORMADOR PREM_RANK_GILLETE (planilha CAMPANHAS)
+// TRANSFORMADOR PREM_RANK_GILLETTE_RCA (planilha CAMPANHAS)
 // A aba tem 2 tabelas lógicas lado a lado, separadas por colunas em
 // branco: (A-C) ranking de prêmio por posição dentro de um grupo, e
 // (F-G) qual grupo cada supervisor pertence. Carregadas separadamente
 // e salvas em 2 QVDs - por ora só extração, sem cálculo de premiação
 // ainda (isso fica para quando formos calcular o Gillette Trimestral).
+// Ranking a nível de RCA - existe também PREM_RANK_GILLETTE_SUP (bloco
+// logo abaixo), mesma estrutura mas com o ranking a nível de Supervisor.
 ///////////////////////////////////////////////////////////////////////////
 SET vPathOrigemRank  = '$(vPathMetasPG)';
 SET vPathDestinoRank = '$(vPathCampanhas)';
@@ -101,30 +103,30 @@ LET vAnoRank    = Year(Today());
 LET vMesTxtRank = Num(Month(Today()), '00');
 
 LET vArquivoRank            = '$(vPathOrigemRank)CAMPANHAS_$(vAnoRank)_$(vMesTxtRank).xlsx';
-LET vNomeArquivoPremRank     = 'TRF_PREM_RANK_GILLETTE_$(vAnoRank)_$(vMesTxtRank).qvd';
-LET vNomeArquivoSupGrupo     = 'TRF_SUP_GRUPO_GILLETTE_$(vAnoRank)_$(vMesTxtRank).qvd';
+LET vNomeArquivoPremRank     = 'TRF_PREM_RANK_GILLETTE_RCA_$(vAnoRank)_$(vMesTxtRank).qvd';
+LET vNomeArquivoSupGrupo     = 'TRF_SUP_GRUPO_GILLETTE_RCA_$(vAnoRank)_$(vMesTxtRank).qvd';
 
 IF Not IsNull(FileSize('$(vArquivoRank)')) THEN
 
-    TRACE Carregando PREM_RANK_GILLETE $(vMesTxtRank)/$(vAnoRank)...;
+    TRACE Carregando PREM_RANK_GILLETTE_RCA $(vMesTxtRank)/$(vAnoRank)...;
 
     /////////////////////////////////////////////////////////////////////////
     // 1. RANKING DE PRÊMIO POR GRUPO (colunas A-C)
     /////////////////////////////////////////////////////////////////////////
-    TRF_PREM_RANK_GILLETTE:
+    TRF_PREM_RANK_GILLETTE_RCA:
     LOAD
         GRUPO_RANK AS GrupoRank,
         POSICAO    AS Posicao,
         PREMIO     AS Premio
     FROM [$(vArquivoRank)]
-    (ooxml, embedded labels, table is PREM_RANK_GILLETE)
+    (ooxml, embedded labels, table is PREM_RANK_GILLETTE_RCA)
     WHERE Not IsNull(GRUPO_RANK);
 
-    STORE TRF_PREM_RANK_GILLETTE INTO [$(vPathDestinoRank)$(vNomeArquivoPremRank)] (qvd);
+    STORE TRF_PREM_RANK_GILLETTE_RCA INTO [$(vPathDestinoRank)$(vNomeArquivoPremRank)] (qvd);
 
-    TRACE QVD de Ranking Premio Gillette gerado com sucesso: $(vPathDestinoRank)$(vNomeArquivoPremRank);
+    TRACE QVD de Ranking Premio Gillette RCA gerado com sucesso: $(vPathDestinoRank)$(vNomeArquivoPremRank);
 
-    DROP TABLE TRF_PREM_RANK_GILLETTE;
+    DROP TABLE TRF_PREM_RANK_GILLETTE_RCA;
 
 
     /////////////////////////////////////////////////////////////////////////
@@ -133,23 +135,91 @@ IF Not IsNull(FileSize('$(vArquivoRank)')) THEN
     //    do que linhas de ranking deixam COD_SUP/GRUPO_SUP em branco nas
     //    linhas excedentes da planilha.
     /////////////////////////////////////////////////////////////////////////
-    TRF_SUP_GRUPO_GILLETTE:
+    TRF_SUP_GRUPO_GILLETTE_RCA:
     LOAD
         COD_SUP   AS CodSupervisor,
         GRUPO_SUP AS GrupoRank
     FROM [$(vArquivoRank)]
-    (ooxml, embedded labels, table is PREM_RANK_GILLETE)
+    (ooxml, embedded labels, table is PREM_RANK_GILLETTE_RCA)
     WHERE Not IsNull(COD_SUP);
 
-    STORE TRF_SUP_GRUPO_GILLETTE INTO [$(vPathDestinoRank)$(vNomeArquivoSupGrupo)] (qvd);
+    STORE TRF_SUP_GRUPO_GILLETTE_RCA INTO [$(vPathDestinoRank)$(vNomeArquivoSupGrupo)] (qvd);
 
-    TRACE QVD de Supervisor-Grupo Gillette gerado com sucesso: $(vPathDestinoRank)$(vNomeArquivoSupGrupo);
+    TRACE QVD de Supervisor-Grupo Gillette RCA gerado com sucesso: $(vPathDestinoRank)$(vNomeArquivoSupGrupo);
 
-    DROP TABLE TRF_SUP_GRUPO_GILLETTE;
+    DROP TABLE TRF_SUP_GRUPO_GILLETTE_RCA;
 
 ELSE
 
-    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtRank)/$(vAnoRank) ainda nao disponivel ($(vArquivoRank)). QVDs de Ranking Gillette nao foram gerados.;
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtRank)/$(vAnoRank) ainda nao disponivel ($(vArquivoRank)). QVDs de Ranking Gillette RCA nao foram gerados.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// TRANSFORMADOR PREM_RANK_GILLETTE_SUP (planilha CAMPANHAS)
+// Mesma estrutura do bloco PREM_RANK_GILLETTE_RCA acima (2 tabelas
+// lógicas lado a lado: ranking de prêmio por grupo e supervisor->grupo),
+// mas para o ranking a nível de SUPERVISOR - por ora só extração/
+// transformação, sem ligação com o restante do modelo ainda (uso
+// futuro).
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemRankSup  = '$(vPathMetasPG)';
+SET vPathDestinoRankSup = '$(vPathCampanhas)';
+
+LET vAnoRankSup    = Year(Today());
+LET vMesTxtRankSup = Num(Month(Today()), '00');
+
+LET vArquivoRankSup            = '$(vPathOrigemRankSup)CAMPANHAS_$(vAnoRankSup)_$(vMesTxtRankSup).xlsx';
+LET vNomeArquivoPremRankSup    = 'TRF_PREM_RANK_GILLETTE_SUP_$(vAnoRankSup)_$(vMesTxtRankSup).qvd';
+LET vNomeArquivoSupGrupoSup    = 'TRF_SUP_GRUPO_GILLETTE_SUP_$(vAnoRankSup)_$(vMesTxtRankSup).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoRankSup)')) THEN
+
+    TRACE Carregando PREM_RANK_GILLETTE_SUP $(vMesTxtRankSup)/$(vAnoRankSup)...;
+
+    /////////////////////////////////////////////////////////////////////////
+    // 1. RANKING DE PRÊMIO POR GRUPO (colunas A-C)
+    /////////////////////////////////////////////////////////////////////////
+    TRF_PREM_RANK_GILLETTE_SUP:
+    LOAD
+        GRUPO_RANK AS GrupoRank,
+        POSICAO    AS Posicao,
+        PREMIO     AS Premio
+    FROM [$(vArquivoRankSup)]
+    (ooxml, embedded labels, table is PREM_RANK_GILLETTE_SUP)
+    WHERE Not IsNull(GRUPO_RANK);
+
+    STORE TRF_PREM_RANK_GILLETTE_SUP INTO [$(vPathDestinoRankSup)$(vNomeArquivoPremRankSup)] (qvd);
+
+    TRACE QVD de Ranking Premio Gillette SUP gerado com sucesso: $(vPathDestinoRankSup)$(vNomeArquivoPremRankSup);
+
+    DROP TABLE TRF_PREM_RANK_GILLETTE_SUP;
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // 2. SUPERVISOR -> GRUPO DE RANKING (colunas F-G)
+    //    WHERE remove as linhas "fantasma" - grupos com menos supervisores
+    //    do que linhas de ranking deixam COD_SUP/GRUPO_SUP em branco nas
+    //    linhas excedentes da planilha.
+    /////////////////////////////////////////////////////////////////////////
+    TRF_SUP_GRUPO_GILLETTE_SUP:
+    LOAD
+        COD_SUP   AS CodSupervisor,
+        GRUPO_SUP AS GrupoRank
+    FROM [$(vArquivoRankSup)]
+    (ooxml, embedded labels, table is PREM_RANK_GILLETTE_SUP)
+    WHERE Not IsNull(COD_SUP);
+
+    STORE TRF_SUP_GRUPO_GILLETTE_SUP INTO [$(vPathDestinoRankSup)$(vNomeArquivoSupGrupoSup)] (qvd);
+
+    TRACE QVD de Supervisor-Grupo Gillette SUP gerado com sucesso: $(vPathDestinoRankSup)$(vNomeArquivoSupGrupoSup);
+
+    DROP TABLE TRF_SUP_GRUPO_GILLETTE_SUP;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtRankSup)/$(vAnoRankSup) ainda nao disponivel ($(vArquivoRankSup)). QVDs de Ranking Gillette SUP nao foram gerados.;
 
 ENDIF
 
@@ -205,6 +275,7 @@ FOR vMes = vMesIni to vMesFim
 
         TMP_VENDAS:
         LOAD
+            "Cod Filial",
             "Cod RCA",
             "Cod Secao",
             "Cod Departamento",
@@ -350,6 +421,7 @@ FOR vOffsetMesMovel = -2 to 0
 
         TMP_VENDAS_TRIMESTRE_MOVEL:
         LOAD
+            "Cod Filial",
             "Cod RCA",
             "Cod Cliente",
             "Cod Secao",
@@ -572,6 +644,344 @@ IF vQtdMesesCarregadosMovel > 0 THEN
 
     DROP TABLE FATO_POSITIVACAO_DEPARTAMENTO_TRIMESTRE_MOVEL;
 
+
+    /////////////////////////////////////////////////////////////////////////
+    // 7. INDICADOR MIX MINIMO (movido de Vendas Mes Atual para Trimestre
+    //    Movel em 2026-08-27 - o Realizado do Mix Minimo agora soma as
+    //    compras dos ULTIMOS 3 MESES, nao so do mes atual)
+    //    Cada Cliente Principal (aba MIX_MIN da planilha CAMPANHAS) precisa
+    //    "positivar" um numero minimo de grupos de produto (OBJETIVO)
+    //    dentro da sua CATEGORIA. Um grupo e positivado se a quantidade
+    //    comprada dos produtos daquele grupo, na janela movel de 3 meses,
+    //    atingir QTDMIN. O RCA so ganha o premio se TODOS os seus Clientes
+    //    Principais baterem seus proprios objetivos (regra tudo ou nada).
+    //
+    //    2 mudancas de regra de negocio em 2026-08-27:
+    //    a) QTDMIN agora vem da aba MIX_MIN (um valor por CLIENTE, aplicado
+    //       igual a todos os grupos dele) - antes vinha da aba
+    //       MIXMIN_GRUPO_PRODUTO (um valor por GRUPO, igual pra todo
+    //       cliente da mesma categoria). MIXMIN_GRUPO_PRODUTO nao tem mais
+    //       coluna QTDMIN.
+    //    b) O mesmo CODCLIPRINC pode representar clientes DIFERENTES em
+    //       filiais diferentes (confirmado na planilha: cliente 334788
+    //       aparece em COD_FILIAL 1 e 3) - por isso toda comparacao de
+    //       compra usa a chave composta Cliente+Filial
+    //       (_ChaveClienteFilial = CODCLIPRINC & '|' & COD_FILIAL), nunca
+    //       CodClientePrincipal sozinho.
+    //
+    //    Precisa rodar AQUI, antes do DROP TABLE TMP_VENDAS_TRIMESTRE_MOVEL
+    //    logo abaixo, porque usa os dados de produto/quantidade (com Cod
+    //    Cliente Principal, Cod Filial e Cod Produto) ja em memoria. Saida
+    //    (nome do QVD, campos, Indicador/TipoIndicador/PeriodoIndicador/
+    //    ClasseIndicador) e IDENTICA a de antes - a Modelagem (Realizado/
+    //    Meta Mix Minimo) nao precisa de nenhuma alteracao.
+    /////////////////////////////////////////////////////////////////////////
+    SET vPathOrigemMix  = '$(vPathMetasPG)';
+    SET vPathDestinoMix = '$(vPathCampanhas)';
+
+    LET vAnoMix    = Year(Today());
+    LET vMesTxtMix = Num(Month(Today()), '00');
+
+    LET vArquivoMix          = '$(vPathOrigemMix)CAMPANHAS_$(vAnoMix)_$(vMesTxtMix).xlsx';
+    LET vNomeArquivoMixMin   = 'TRF_MIX_MIN_$(vAnoMix)_$(vMesTxtMix).qvd';
+    LET vNomeArquivoMixGrupo = 'TRF_MIXMIN_GRUPO_PRODUTO_$(vAnoMix)_$(vMesTxtMix).qvd';
+
+    IF Not IsNull(FileSize('$(vArquivoMix)')) THEN
+
+        TRACE Carregando MIX_MIN e MIXMIN_GRUPO_PRODUTO $(vMesTxtMix)/$(vAnoMix)...;
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.1 TRANSFORMADOR - MIX_MIN (Cliente+Filial x Objetivo x QtdMin)
+        //     COD_FILIAL e QTDMIN agora fazem parte desta aba (antes QTDMIN
+        //     vinha de MIXMIN_GRUPO_PRODUTO). _ChaveClienteFilial e a chave
+        //     usada daqui pra frente pra casar com as vendas.
+        /////////////////////////////////////////////////////////////////////
+        TRF_MIX_MIN:
+        LOAD
+            Date(MonthStart(DATA)) AS DATA,
+            COD_SUP                AS CodSupervisor,
+            COD_RCA                AS CodRca,
+            CODCLIPRINC             AS CodClientePrincipal,
+            COD_FILIAL               AS CodFilial,
+            CLASSE                    AS Classe,
+            RAMO                       AS Ramo,
+            CATEGORIA                   AS Categoria,
+            OBJETIVO                     AS Objetivo,
+            QTDMIN                        AS QtdMin,
+            CODCLIPRINC & '|' & COD_FILIAL AS _ChaveClienteFilial
+        FROM [$(vArquivoMix)]
+        (ooxml, embedded labels, table is MIX_MIN)
+        WHERE Not IsNull(COD_RCA);
+
+        STORE TRF_MIX_MIN INTO [$(vPathDestinoMix)$(vNomeArquivoMixMin)] (qvd);
+
+        TRACE QVD de MIX_MIN gerado com sucesso: $(vPathDestinoMix)$(vNomeArquivoMixMin);
+
+        // TRF_MIX_MIN permanece residente (sem DROP aqui) e e reaproveitada
+        // direto na secao 7.4 (MIXMIN_ELEGIVEL) - evita gravar o QVD e
+        // reler o mesmo arquivo do disco logo em seguida.
+
+        // Mapping Cliente+Filial -> Categoria, usado na secao 7.5 para
+        // resolver a ambiguidade Produto->Grupo (ver comentario na 7.2).
+        MAP_CLIENTE_CATEGORIA:
+        MAPPING LOAD
+            _ChaveClienteFilial,
+            Categoria
+        RESIDENT TRF_MIX_MIN;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.2 MIXMIN_GRUPO_PRODUTO
+        //     A aba nao tem mais coluna QTDMIN (removida - QTDMIN agora
+        //     vem de MIX_MIN, por cliente). NOMEGRUPO/CATEGORIA agora vem
+        //     preenchidos em toda linha do grupo (antes só na 1a linha por
+        //     efeito de célula mesclada) - por isso LOAD DISTINCT em vez
+        //     do antigo filtro WHERE Not IsNull(QTDMIN).
+        //
+        //     IMPORTANTE (bug corrigido em 2026-08-27, ajustado de novo no
+        //     mesmo dia a pedido do usuario): COD_GRUPO NAO e um id
+        //     confiavel para agregar - ele se repete por Categoria (ex:
+        //     Grupo 1 existe em DPP, HFS, C&C e NRM, cada um sendo um
+        //     produto diferente) e o MESMO grupo (mesmo NOMEGRUPO) pode
+        //     ter CODIGOS diferentes em categorias diferentes (confirmado
+        //     na planilha: 103 dos 186 nomes de grupo tem mais de um
+        //     CodGrupo distinto entre categorias). NOMEGRUPO e o
+        //     identificador de negocio real do grupo de produtos, e ja
+        //     vem preenchido em toda linha da aba (nao so na 1a linha do
+        //     grupo) - por isso a agregacao usa NomeGrupo, nao mais
+        //     CodGrupo (que foi removido desta tabela). COD_GRUPO
+        //     continua nao existindo mais nesta aba (ver nota QTDMIN
+        //     acima).
+        /////////////////////////////////////////////////////////////////////
+        TRF_MIXMIN_PRODUTO_GRUPO:
+        LOAD
+            CODPROD    AS CodProduto,
+            NOMEGRUPO  AS NomeGrupo,
+            CATEGORIA  AS Categoria
+        FROM [$(vArquivoMix)]
+        (ooxml, embedded labels, table is MIXMIN_GRUPO_PRODUTO)
+        WHERE Not IsNull(CODPROD);
+
+        TRF_MIXMIN_GRUPO:
+        LOAD DISTINCT
+            NOMEGRUPO  AS NomeGrupo,
+            CATEGORIA  AS Categoria
+        FROM [$(vArquivoMix)]
+        (ooxml, embedded labels, table is MIXMIN_GRUPO_PRODUTO)
+        WHERE Not IsNull(NOMEGRUPO);
+
+        // QVD combinado (entregavel) montado numa tabela a parte
+        // (MIXMIN_GRUPO_PRODUTO_QVD), so para o STORE. TRF_MIXMIN_PRODUTO_GRUPO
+        // e TRF_MIXMIN_GRUPO permanecem residentes (sem DROP) e sao
+        // reaproveitadas direto nas secoes 7.4/7.5 abaixo.
+        MIXMIN_GRUPO_PRODUTO_QVD:
+        NoConcatenate
+        LOAD * RESIDENT TRF_MIXMIN_PRODUTO_GRUPO;
+
+        CONCATENATE (MIXMIN_GRUPO_PRODUTO_QVD)
+        LOAD * RESIDENT TRF_MIXMIN_GRUPO;
+
+        STORE MIXMIN_GRUPO_PRODUTO_QVD INTO [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)] (qvd);
+
+        TRACE QVD de MIXMIN_GRUPO_PRODUTO gerado com sucesso: $(vPathDestinoMix)$(vNomeArquivoMixGrupo);
+
+        DROP TABLE MIXMIN_GRUPO_PRODUTO_QVD;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.4 CONJUNTO ELEGÍVEL (Cliente+Filial x Grupo da mesma Categoria)
+        //     JOIN comum por "Categoria" produz o cruzamento completo:
+        //     cada cliente+filial pareado com TODOS os grupos da sua
+        //     própria categoria - inclusive grupos que ele não comprou
+        //     nada (ficam elegíveis, mas vão zerar na comparação com
+        //     QtdMin mais adiante). QtdMin já vem do próprio cliente
+        //     (TRF_MIX_MIN), não precisa de join extra pra ele.
+        /////////////////////////////////////////////////////////////////////
+        NoConcatenate
+        MIXMIN_ELEGIVEL:
+        LOAD
+            CodRca,
+            CodClientePrincipal,
+            CodFilial,
+            _ChaveClienteFilial,
+            Categoria,
+            Objetivo,
+            QtdMin
+        RESIDENT TRF_MIX_MIN;
+
+        JOIN (MIXMIN_ELEGIVEL)
+        LOAD
+            Categoria,
+            NomeGrupo
+        RESIDENT TRF_MIXMIN_GRUPO;
+
+        DROP TABLE TRF_MIX_MIN;
+        DROP TABLE TRF_MIXMIN_GRUPO;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.5 QUANTIDADE REALMENTE COMPRADA POR CLIENTE+FILIAL + GRUPO
+        //     Fonte agora e TMP_VENDAS_TRIMESTRE_MOVEL (3 meses), nao mais
+        //     TMP_VENDAS (1 mes). Filtra so pra produtos que pertencem a
+        //     algum grupo do Mix Minimo e so pra combinacoes Cliente+
+        //     Filial que estao no MIX_MIN - depois soma por Cliente+
+        //     Filial+Grupo. So soma a quantidade se o valor correspondente
+        //     for > 0 - evita contar linhas com valor zerado/negativo (ex:
+        //     estorno, ajuste) como se fossem compra de verdade.
+        //     Traz a Categoria DO CLIENTE (via ApplyMap) para o join com
+        //     TRF_MIXMIN_PRODUTO_GRUPO usar CodProduto+Categoria como
+        //     chave composta, resolvendo o produto ao NomeGrupo correto
+        //     da categoria do proprio cliente (ver comentario na 7.2).
+        /////////////////////////////////////////////////////////////////////
+        TEMP_VENDAS_MIXMIN:
+        LOAD
+            "Cod Produto",
+            "Cod Cliente Principal" & '|' & "Cod Filial" AS _ChaveClienteFilial,
+            ApplyMap('MAP_CLIENTE_CATEGORIA', "Cod Cliente Principal" & '|' & "Cod Filial") AS Categoria,
+            QtdPedidoLiquido,
+            QtdFaturadoLiquido,
+            "Vlr Venda Liquida",
+            "Vlr Tot Faturado Liquido Venda"
+        RESIDENT TMP_VENDAS_TRIMESTRE_MOVEL
+        WHERE Exists(CodProduto, "Cod Produto")
+          AND Exists(_ChaveClienteFilial, "Cod Cliente Principal" & '|' & "Cod Filial");
+
+        LEFT JOIN (TEMP_VENDAS_MIXMIN)
+        LOAD
+            CodProduto,
+            Categoria,
+            NomeGrupo
+        RESIDENT TRF_MIXMIN_PRODUTO_GRUPO;
+
+        DROP TABLE TRF_MIXMIN_PRODUTO_GRUPO;
+
+        COMPRA_CLIENTE_GRUPO:
+        LOAD
+            _ChaveClienteFilial,
+            NomeGrupo,
+            Sum(If("Vlr Venda Liquida" > 0, QtdPedidoLiquido))                AS QtdPedidaGrupo,
+            Sum(If("Vlr Tot Faturado Liquido Venda" > 0, QtdFaturadoLiquido)) AS QtdFaturadaGrupo
+        RESIDENT TEMP_VENDAS_MIXMIN
+        GROUP BY
+            _ChaveClienteFilial,
+            NomeGrupo;
+
+        DROP TABLE TEMP_VENDAS_MIXMIN;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.6 POSITIVAÇÃO DO GRUPO (por Cliente+Filial)
+        //     LEFT JOIN por _ChaveClienteFilial + NomeGrupo (chave composta
+        //     automatica - os 2 campos em comum entre as tabelas) - grupos
+        //     sem nenhuma compra ficam com QtdPedidaGrupo/QtdFaturadaGrupo
+        //     em Null, tratados como 0 com Alt() antes de comparar com o
+        //     QtdMin DO CLIENTE (não mais do grupo).
+        /////////////////////////////////////////////////////////////////////
+        LEFT JOIN (MIXMIN_ELEGIVEL)
+        LOAD * RESIDENT COMPRA_CLIENTE_GRUPO;
+
+        DROP TABLE COMPRA_CLIENTE_GRUPO;
+
+        MIXMIN_GRUPO_FLAG:
+        NoConcatenate
+        LOAD
+            *,
+            If(Alt(QtdPedidaGrupo, 0)   >= QtdMin, 1, 0) AS FlagGrupoPositivadoPedido,
+            If(Alt(QtdFaturadaGrupo, 0) >= QtdMin, 1, 0) AS FlagGrupoPositivadoFaturado
+        RESIDENT MIXMIN_ELEGIVEL;
+
+        DROP TABLE MIXMIN_ELEGIVEL;
+
+        // VALIDAÇÃO (2026-08-27, a pedido do usuário): QtdPedidaGrupo/
+        // QtdFaturadaGrupo por Cliente+Filial+Grupo, lado a lado com
+        // QtdMin e o flag de positivação - pra cruzar linha a linha com
+        // a apuração interna e achar onde diverge. Não afeta o cálculo
+        // (só um STORE extra de uma tabela que já existia em memória).
+        STORE MIXMIN_GRUPO_FLAG INTO [$(vPathDestinoMix)DEBUG_MIXMIN_GRUPO_CLIENTE_MES_$(vAnoMix)_$(vMesTxtMix).qvd] (qvd);
+
+        TRACE QVD de validacao (Mix Minimo por Cliente+Filial+Grupo) gerado com sucesso: $(vPathDestinoMix)DEBUG_MIXMIN_GRUPO_CLIENTE_MES_$(vAnoMix)_$(vMesTxtMix).qvd;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.7 OBJETIVO ATINGIDO (por Cliente+Filial)
+        //     Soma os grupos positivados do cliente+filial e compara com o
+        //     Objetivo dele - resulta em Sim(1)/Não(0), separado para
+        //     Pedido e Faturado.
+        /////////////////////////////////////////////////////////////////////
+        MIXMIN_CLIENTE:
+        LOAD
+            CodRca,
+            CodClientePrincipal,
+            CodFilial,
+            _ChaveClienteFilial,
+            Objetivo,
+            Sum(FlagGrupoPositivadoPedido)   AS GruposPositivadosPedido,
+            Sum(FlagGrupoPositivadoFaturado) AS GruposPositivadosFaturado
+        RESIDENT MIXMIN_GRUPO_FLAG
+        GROUP BY
+            CodRca,
+            CodClientePrincipal,
+            CodFilial,
+            _ChaveClienteFilial,
+            Objetivo;
+
+        DROP TABLE MIXMIN_GRUPO_FLAG;
+
+        MIXMIN_CLIENTE_FLAG:
+        NoConcatenate
+        LOAD
+            *,
+            If(GruposPositivadosPedido   >= Objetivo, 1, 0) AS FlagClienteAtingiuPedido,
+            If(GruposPositivadosFaturado >= Objetivo, 1, 0) AS FlagClienteAtingiuFaturado
+        RESIDENT MIXMIN_CLIENTE;
+
+        // VALIDAÇÃO (2026-08-27, a pedido do usuário): resumo por
+        // Cliente+Filial - grupos positivados vs Objetivo e o flag final
+        // do cliente, pra ver em qual etapa (grupo ou objetivo) a
+        // apuração diverge quando o RCA não bate.
+        STORE MIXMIN_CLIENTE_FLAG INTO [$(vPathDestinoMix)DEBUG_MIXMIN_CLIENTE_MES_$(vAnoMix)_$(vMesTxtMix).qvd] (qvd);
+
+        TRACE QVD de validacao (Mix Minimo por Cliente+Filial) gerado com sucesso: $(vPathDestinoMix)DEBUG_MIXMIN_CLIENTE_MES_$(vAnoMix)_$(vMesTxtMix).qvd;
+
+        DROP TABLE MIXMIN_CLIENTE;
+
+
+        /////////////////////////////////////////////////////////////////////
+        // 7.8 CONSOLIDAÇÃO POR RCA - TUDO OU NADA
+        //     Min() do flag por cliente+filial: se algum cliente do RCA
+        //     ficou com flag 0 (não bateu), o Min vira 0 - só fica 1
+        //     (100%) se TODOS os clientes (em qualquer filial) do RCA
+        //     bateram seus próprios objetivos. Saída idêntica à versão
+        //     anterior (mesmo nome de QVD/campos) - Modelagem não muda.
+        /////////////////////////////////////////////////////////////////////
+        FATO_MIXMINIMO_RCA:
+        LOAD
+            CodRca,
+            'DEPARTAMENTO'  AS TipoIndicador,
+            'MESATUAL'      AS PeriodoIndicador,
+            'MANUAL'        AS ClasseIndicador,
+            'MIX MINIMO'    AS Indicador,
+            Min(FlagClienteAtingiuPedido)   AS ValorPedidoLiquido,   // já vem como 0 ou 1 (0%/100%)
+            Min(FlagClienteAtingiuFaturado) AS ValorFaturadoLiquido, // já vem como 0 ou 1 (0%/100%)
+            1                                AS Meta                 // Meta fixa = 1 (100%)
+        RESIDENT MIXMIN_CLIENTE_FLAG
+        GROUP BY
+            CodRca;
+
+        DROP TABLE MIXMIN_CLIENTE_FLAG;
+
+        STORE FATO_MIXMINIMO_RCA INTO [$(vPathDestinoMix)FATO_MIXMINIMO_RCA_MES_$(vAnoMix)_$(vMesTxtMix).qvd] (qvd);
+
+        TRACE QVD de Mix Minimo por RCA gerado com sucesso.;
+
+        DROP TABLE FATO_MIXMINIMO_RCA;
+
+    ELSE
+
+        TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtMix)/$(vAnoMix) ainda nao disponivel ($(vArquivoMix)). QVD de Mix Minimo nao foi gerado.;
+
+    ENDIF
+
     DROP TABLE TMP_VENDAS_TRIMESTRE_MOVEL;
 
 ELSE
@@ -620,6 +1030,7 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
 
     TMP_VENDAS:
     LOAD
+        "Cod Filial",
         "Cod RCA",
         "Cod Cliente",
         ApplyMap('MAP_CLIENTE_PRINC',"Cod Cliente",'#ND') as "Cod Cliente Principal",
@@ -840,15 +1251,14 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
 
 
     /////////////////////////////////////////////////////////////////////////
-    // 7. INDICADOR MIX MINIMO
-    //    Cada Cliente Principal (aba MIX_MIN da planilha CAMPANHAS) precisa
-    //    "positivar" um número mínimo de grupos de produto (OBJETIVO)
-    //    dentro da sua CATEGORIA. Um grupo é positivado se a quantidade
-    //    comprada dos produtos daquele grupo (aba MIXMIN_GRUPO_PRODUTO)
-    //    atingir QTDMIN. O RCA só ganha o prêmio se TODOS os seus Clientes
-    //    Principais baterem seus próprios objetivos (regra tudo ou nada).
-    //    Precisa rodar AQUI, antes do DROP TABLE TMP_VENDAS logo abaixo,
-    //    porque usa os dados de produto/quantidade ainda em memória.
+    // NOTA: o cálculo do indicador MIX MINIMO que rodava aqui (antiga
+    // seção "7. INDICADOR MIX MINIMO") foi MOVIDO para o bloco "Vendas
+    // Trimestre Movel" em 2026-08-27 (o Realizado do Mix Minimo agora usa
+    // a janela movel de 3 meses, não mais o mês atual) - ver lá a nova
+    // seção "7. INDICADOR MIX MINIMO". Este IF/variáveis (vArquivoMix
+    // etc.) continuam aqui porque o Listing Iniciativas abaixo ainda lê
+    // a mesma planilha CAMPANHAS do mês atual (aba MIX_MIN para
+    // participantes + LISTING_PRODUTOS).
     /////////////////////////////////////////////////////////////////////////
     SET vPathOrigemMix  = '$(vPathMetasPG)';
     SET vPathDestinoMix = '$(vPathCampanhas)';
@@ -856,242 +1266,11 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
     LET vAnoMix    = Year(Today());
     LET vMesTxtMix = Num(Month(Today()), '00');
 
-    LET vArquivoMix          = '$(vPathOrigemMix)CAMPANHAS_$(vAnoMix)_$(vMesTxtMix).xlsx';
-    LET vNomeArquivoMixMin   = 'TRF_MIX_MIN_$(vAnoMix)_$(vMesTxtMix).qvd';
-    LET vNomeArquivoMixGrupo = 'TRF_MIXMIN_GRUPO_PRODUTO_$(vAnoMix)_$(vMesTxtMix).qvd';
+    LET vArquivoMix = '$(vPathOrigemMix)CAMPANHAS_$(vAnoMix)_$(vMesTxtMix).xlsx';
 
     IF Not IsNull(FileSize('$(vArquivoMix)')) THEN
 
-        TRACE Carregando MIX_MIN e MIXMIN_GRUPO_PRODUTO $(vMesTxtMix)/$(vAnoMix)...;
-
-        /////////////////////////////////////////////////////////////////////
-        // 7.1 TRANSFORMADOR - MIX_MIN (Cliente Principal x Objetivo)
-        /////////////////////////////////////////////////////////////////////
-        TRF_MIX_MIN:
-        LOAD
-            Date(MonthStart(DATA)) AS DATA,
-            COD_SUP                AS CodSupervisor,
-            COD_RCA                AS CodRca,
-            CODCLIPRINC             AS CodClientePrincipal,
-            CLASSE                  AS Classe,
-            RAMO                     AS Ramo,
-            CATEGORIA                AS Categoria,
-            OBJETIVO                  AS Objetivo
-        FROM [$(vArquivoMix)]
-        (ooxml, embedded labels, table is MIX_MIN)
-        WHERE Not IsNull(COD_RCA);
-
-        STORE TRF_MIX_MIN INTO [$(vPathDestinoMix)$(vNomeArquivoMixMin)] (qvd);
-
-        TRACE QVD de MIX_MIN gerado com sucesso: $(vPathDestinoMix)$(vNomeArquivoMixMin);
-
-        // TRF_MIX_MIN permanece residente (sem DROP aqui) e e reaproveitada
-        // direto na secao 7.4 (MIXMIN_ELEGIVEL) - otimizacao: evita gravar
-        // o QVD e reler o mesmo arquivo do disco logo em seguida so para
-        // reduzir colunas (round-trip de I/O desnecessario).
-
-
-        /////////////////////////////////////////////////////////////////////
-        // 7.2 MIXMIN_GRUPO_PRODUTO
-        //     Colunas F/G da planilha ("NOMEGRUPO" duplicado) são só um
-        //     resíduo/rascunho da planilha, sem relação com a linha - não
-        //     carregadas. QTDMIN só vem preenchido na primeira linha de
-        //     cada grupo (efeito de célula mesclada na origem) - por isso
-        //     carregamos bruto (produto->grupo, todas as linhas) e
-        //     separado grupo->QTDMIN (só as linhas onde QTDMIN existe).
-        /////////////////////////////////////////////////////////////////////
-        TRF_MIXMIN_PRODUTO_GRUPO:
-        LOAD
-            CODPROD    AS CodProduto,
-            COD_GRUPO  AS CodGrupo
-        FROM [$(vArquivoMix)]
-        (ooxml, embedded labels, table is MIXMIN_GRUPO_PRODUTO);
-
-        TRF_MIXMIN_GRUPO:
-        LOAD
-            COD_GRUPO  AS CodGrupo,
-            NOMEGRUPO  AS NomeGrupo,
-            CATEGORIA  AS Categoria,
-            QTDMIN     AS QtdMin
-        FROM [$(vArquivoMix)]
-        (ooxml, embedded labels, table is MIXMIN_GRUPO_PRODUTO)
-        WHERE Not IsNull(QTDMIN);
-
-        // QVD combinado (entregavel) montado numa tabela a parte
-        // (MIXMIN_GRUPO_PRODUTO_QVD), so para o STORE. TRF_MIXMIN_PRODUTO_GRUPO
-        // e TRF_MIXMIN_GRUPO permanecem residentes (sem DROP) e sao
-        // reaproveitadas direto nas secoes 7.4/7.5 abaixo.
-        // Otimizacao: elimina a antiga secao 7.3, que gravava este QVD e
-        // imediatamente relia o mesmo arquivo do disco so para separar de
-        // volta em duas tabelas (round-trip de I/O desnecessario - os
-        // dados ja estavam em memoria).
-        MIXMIN_GRUPO_PRODUTO_QVD:
-        NoConcatenate
-        LOAD * RESIDENT TRF_MIXMIN_PRODUTO_GRUPO;
-
-        CONCATENATE (MIXMIN_GRUPO_PRODUTO_QVD)
-        LOAD * RESIDENT TRF_MIXMIN_GRUPO;
-
-        STORE MIXMIN_GRUPO_PRODUTO_QVD INTO [$(vPathDestinoMix)$(vNomeArquivoMixGrupo)] (qvd);
-
-        TRACE QVD de MIXMIN_GRUPO_PRODUTO gerado com sucesso: $(vPathDestinoMix)$(vNomeArquivoMixGrupo);
-
-        DROP TABLE MIXMIN_GRUPO_PRODUTO_QVD;
-
-
-        /////////////////////////////////////////////////////////////////////
-        // 7.4 CONJUNTO ELEGÍVEL (Cliente x Grupo da mesma Categoria)
-        //     JOIN comum por "Categoria" produz o cruzamento completo:
-        //     cada cliente pareado com TODOS os grupos da sua própria
-        //     categoria - inclusive grupos que ele não comprou nada
-        //     (ficam elegíveis, mas vão zerar na comparação com QTDMIN
-        //     mais adiante).
-        /////////////////////////////////////////////////////////////////////
-        NoConcatenate
-        MIXMIN_ELEGIVEL:
-        LOAD
-            CodRca,
-            CodClientePrincipal,
-            Categoria,
-            Objetivo
-        RESIDENT TRF_MIX_MIN;
-
-        JOIN (MIXMIN_ELEGIVEL)
-        LOAD
-            Categoria,
-            CodGrupo,
-            QtdMin
-        RESIDENT TRF_MIXMIN_GRUPO;
-
-        DROP TABLE TRF_MIX_MIN;
-        DROP TABLE TRF_MIXMIN_GRUPO;
-
-
-        /////////////////////////////////////////////////////////////////////
-        // 7.5 QUANTIDADE REALMENTE COMPRADA POR CLIENTE + GRUPO
-        //     Filtra TMP_VENDAS só para produtos que pertencem a algum
-        //     grupo do Mix Minimo e só para Clientes Principais que estão
-        //     no MIX_MIN - depois soma por Cliente+Grupo. Só soma a
-        //     quantidade se o valor correspondente for > 0 - evita contar
-        //     linhas com valor zerado/negativo (ex: estorno, ajuste) como
-        //     se fossem compra de verdade.
-        /////////////////////////////////////////////////////////////////////
-        TEMP_VENDAS_MIXMIN:
-        LOAD
-            "Cod Cliente Principal",
-            "Cod Produto",
-            QtdPedidoLiquido,
-            QtdFaturadoLiquido,
-            "Vlr Venda Liquida",
-            "Vlr Tot Faturado Liquido Venda"
-        RESIDENT TMP_VENDAS
-        WHERE Exists(CodProduto, "Cod Produto")
-          AND Exists(CodClientePrincipal, "Cod Cliente Principal");
-
-        LEFT JOIN (TEMP_VENDAS_MIXMIN)
-        LOAD
-            CodProduto,
-            CodGrupo
-        RESIDENT TRF_MIXMIN_PRODUTO_GRUPO;
-
-        DROP TABLE TRF_MIXMIN_PRODUTO_GRUPO;
-
-        COMPRA_CLIENTE_GRUPO:
-        LOAD
-            "Cod Cliente Principal" AS CodClientePrincipal,
-            CodGrupo,
-            Sum(If("Vlr Venda Liquida" > 0, QtdPedidoLiquido))                AS QtdPedidaGrupo,
-            Sum(If("Vlr Tot Faturado Liquido Venda" > 0, QtdFaturadoLiquido)) AS QtdFaturadaGrupo
-        RESIDENT TEMP_VENDAS_MIXMIN
-        GROUP BY
-            "Cod Cliente Principal",
-            CodGrupo;
-
-        DROP TABLE TEMP_VENDAS_MIXMIN;
-
-
-        /////////////////////////////////////////////////////////////////////
-        // 7.6 POSITIVAÇÃO DO GRUPO (por Cliente)
-        //     LEFT JOIN por CodClientePrincipal + CodGrupo - grupos sem
-        //     nenhuma compra ficam com QtdPedidaGrupo/QtdFaturadaGrupo em
-        //     Null, tratados como 0 com Alt() antes de comparar com QtdMin.
-        /////////////////////////////////////////////////////////////////////
-        LEFT JOIN (MIXMIN_ELEGIVEL)
-        LOAD * RESIDENT COMPRA_CLIENTE_GRUPO;
-
-        DROP TABLE COMPRA_CLIENTE_GRUPO;
-
-        MIXMIN_GRUPO_FLAG:
-        NoConcatenate
-        LOAD
-            *,
-            If(Alt(QtdPedidaGrupo, 0)   >= QtdMin, 1, 0) AS FlagGrupoPositivadoPedido,
-            If(Alt(QtdFaturadaGrupo, 0) >= QtdMin, 1, 0) AS FlagGrupoPositivadoFaturado
-        RESIDENT MIXMIN_ELEGIVEL;
-
-        DROP TABLE MIXMIN_ELEGIVEL;
-
-
-        /////////////////////////////////////////////////////////////////////
-        // 7.7 OBJETIVO ATINGIDO (por Cliente)
-        //     Soma os grupos positivados do cliente e compara com o
-        //     Objetivo dele - resulta em Sim(1)/Não(0), separado para
-        //     Pedido e Faturado.
-        /////////////////////////////////////////////////////////////////////
-        MIXMIN_CLIENTE:
-        LOAD
-            CodRca,
-            CodClientePrincipal,
-            Objetivo,
-            Sum(FlagGrupoPositivadoPedido)   AS GruposPositivadosPedido,
-            Sum(FlagGrupoPositivadoFaturado) AS GruposPositivadosFaturado
-        RESIDENT MIXMIN_GRUPO_FLAG
-        GROUP BY
-            CodRca,
-            CodClientePrincipal,
-            Objetivo;
-
-        DROP TABLE MIXMIN_GRUPO_FLAG;
-
-        MIXMIN_CLIENTE_FLAG:
-        NoConcatenate
-        LOAD
-            *,
-            If(GruposPositivadosPedido   >= Objetivo, 1, 0) AS FlagClienteAtingiuPedido,
-            If(GruposPositivadosFaturado >= Objetivo, 1, 0) AS FlagClienteAtingiuFaturado
-        RESIDENT MIXMIN_CLIENTE;
-
-        DROP TABLE MIXMIN_CLIENTE;
-
-
-        /////////////////////////////////////////////////////////////////////
-        // 7.8 CONSOLIDAÇÃO POR RCA - TUDO OU NADA
-        //     Min() do flag por cliente: se algum cliente do RCA ficou com
-        //     flag 0 (não bateu), o Min vira 0 - só fica 1 (100%) se
-        //     TODOS os clientes do RCA bateram seus próprios objetivos.
-        /////////////////////////////////////////////////////////////////////
-        FATO_MIXMINIMO_RCA:
-        LOAD
-            CodRca,
-            'DEPARTAMENTO'  AS TipoIndicador,
-            'MESATUAL'      AS PeriodoIndicador,
-            'MANUAL'        AS ClasseIndicador,
-            'MIX MINIMO'    AS Indicador,
-            Min(FlagClienteAtingiuPedido)   AS ValorPedidoLiquido,   // já vem como 0 ou 1 (0%/100%)
-            Min(FlagClienteAtingiuFaturado) AS ValorFaturadoLiquido, // já vem como 0 ou 1 (0%/100%)
-            1                                AS Meta                 // Meta fixa = 1 (100%)
-        RESIDENT MIXMIN_CLIENTE_FLAG
-        GROUP BY
-            CodRca;
-
-        DROP TABLE MIXMIN_CLIENTE_FLAG;
-
-        STORE FATO_MIXMINIMO_RCA INTO [$(vPathDestinoMix)FATO_MIXMINIMO_RCA_MES_$(vAnoMix)_$(vMesTxtMix).qvd] (qvd);
-
-        TRACE QVD de Mix Minimo por RCA gerado com sucesso.;
-
-        DROP TABLE FATO_MIXMINIMO_RCA;
-
+        TRACE Carregando MIX_MIN (participantes) e LISTING_PRODUTOS $(vMesTxtMix)/$(vAnoMix)...;
 
         /////////////////////////////////////////////////////////////////////
         // 8. INDICADOR LISTING INICIATIVAS - 100% CARTEIRA
@@ -1103,8 +1282,9 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
         //    CAIXAS (QTDMIN_CX, comparado contra QtdCaixaPedidoLiquido/
         //    QtdCaixaFaturadoLiquido). O RCA so ganha se TODOS os seus
         //    Clientes Principais completarem a propria lista (regra
-        //    tudo ou nada - "100% CARTEIRA"), mesmo padrao do Mix
-        //    Minimo acima. Precisa rodar AQUI, antes do DROP TABLE
+        //    tudo ou nada - "100% CARTEIRA"), mesmo padrao do indicador
+        //    Mix Minimo (ver bloco Vendas Trimestre Movel). Precisa
+        //    rodar AQUI, antes do DROP TABLE
         //    TMP_VENDAS logo abaixo, porque reaproveita TMP_VENDAS
         //    (produto/caixa por cliente) ainda em memoria.
         /////////////////////////////////////////////////////////////////////
@@ -1269,7 +1449,7 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
 
     ELSE
 
-        TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtMix)/$(vAnoMix) ainda nao disponivel ($(vArquivoMix)). QVDs de Mix Minimo e Listing Iniciativas nao foram gerados.;
+        TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtMix)/$(vAnoMix) ainda nao disponivel ($(vArquivoMix)). QVD de Listing Iniciativas nao foi gerado.;
 
     ENDIF
 
@@ -2403,6 +2583,17 @@ MAPPING LOAD
     PercDevolucaoRcaFaturado
 RESIDENT GANHO_FINAL_RCA;
 
+// GANHO_FINAL_RCA permanece no modelo de dados de proposito (2026-08-27)
+// - e a base de premiacao final do RCA, usada para validar contra o
+// total de devolucao dele. NAO dropar aqui. O loop de associacao que
+// isso causava com BASE_RCA_INDICADORES_REALIZADO/PREMIACAO_GILLETTE_TRI
+// foi resolvido de outra forma: renomeando a COPIA de
+// PercDevolucaoRcaFaturado feita via ApplyMap dentro de BASE_GILLETTE_TRI
+// (ver comentario la embaixo) - GANHO_FINAL_RCA e BASE_RCA_INDICADORES_REALIZADO/
+// PREMIACAO_GILLETTE_TRI continuam ligadas SO por CodRca, que e a chave
+// correta (nenhum campo de valor deve ser reutilizado com o mesmo nome
+// em 2 tabelas que ficam associadas no modelo final).
+
 MAP_FAIXA_DEVOL_RANK:
 MAPPING LOAD
     CodRca,
@@ -2413,11 +2604,30 @@ FROM [$(vPathDestinoDevolRank)$(vNomeArquivoDevolRank)]
 BASE_GILLETTE_TRI:
 LOAD
     CodRca,
-    CodSupervisor,
+    // CodSupervisor e PercAtingimentoFaturado renomeados abaixo (bug
+    // corrigido em 2026-08-27): BASE_RCA_INDICADORES_REALIZADO tambem
+    // tem campos com esses MESMOS nomes, e como essa tabela permanece
+    // no modelo de dados final, isso ligava BASE_RCA_INDICADORES_REALIZADO
+    // e PREMIACAO_GILLETTE_TRI por TRES campos simultaneos (CodRca +
+    // CodSupervisor + PercAtingimentoFaturado) - Qlik trata isso como
+    // referencia circular entre as duas tabelas, mesmo sendo so 2
+    // tabelas, e Sum() sobre o campo duplica/triplica o resultado.
+    // CodRca sozinho ja e a chave correta entre as duas tabelas.
+    CodSupervisor AS CodSupervisorGillette,
     ApplyMap('MAP_SUP_GRUPO_GILLETTE', CodSupervisor, '#ND') AS GrupoRank,
-    PercAtingimentoFaturado,
+    PercAtingimentoFaturado AS PercAtingimentoFaturadoGillette,
 
-    ApplyMap('MAP_PERC_DEVOL_FAT_RCA', CodRca) AS PercDevolucaoRcaFaturado,
+    // PercDevolucaoRcaFaturadoGillette (renomeado, bug corrigido em
+    // 2026-08-27): e so uma COPIA do valor de GANHO_FINAL_RCA (via
+    // ApplyMap) pra uso no calculo do ranking Gillette abaixo - usar o
+    // MESMO nome "PercDevolucaoRcaFaturado" que ja existe como campo
+    // real em GANHO_FINAL_RCA ligava essa tabela e PREMIACAO_GILLETTE_TRI
+    // por esse campo ALEM de CodRca, fechando um loop de 3 tabelas
+    // (GANHO_FINAL_RCA - PREMIACAO_GILLETTE_TRI - BASE_RCA_INDICADORES_REALIZADO
+    // - GANHO_FINAL_RCA). GANHO_FINAL_RCA continua no modelo (nao foi
+    // dropada - e a base de premiacao final do RCA usada para validar
+    // contra a devolucao).
+    ApplyMap('MAP_PERC_DEVOL_FAT_RCA', CodRca) AS PercDevolucaoRcaFaturadoGillette,
     ApplyMap('MAP_FAIXA_DEVOL_RANK', CodRca)   AS FaixaDevolucaoRank,
 
     // Se não há Faixa cadastrada para o RCA, não penaliza (mantém o
@@ -2460,7 +2670,7 @@ LOAD
     GrupoRank,
     If(GrupoRank = Peek('GrupoRank'), Peek('Posicao') + 1, 1) AS Posicao
 RESIDENT BASE_GILLETTE_TRI
-WHERE PercAtingimentoFaturado >= 1   // só participa do rank quem bateu 100% ou mais
+WHERE PercAtingimentoFaturadoGillette >= 1   // só participa do rank quem bateu 100% ou mais
 ORDER BY GrupoRank, PercAtingimentoFaturadoRank Desc;
 
 
@@ -2498,7 +2708,7 @@ DROP FIELD GrupoRank FROM RANKING_GILLETTE;
        Único campo em comum agora é CodRca - RCAs que não bateram 100%
        (e por isso não estão em RANKING_GILLETTE) ficam com Posicao/
        Premio em branco, mas continuam na tabela com o
-       PercAtingimentoFaturado visível.
+       PercAtingimentoFaturadoGillette visível.
 
 //////////////////////////////////////////////////////////////////////////*/
 LEFT JOIN (BASE_GILLETTE_TRI)

@@ -38,8 +38,16 @@ integralmente antes da próxima:
 2. **TRF_BASE_RCA_INDICADORES** — extrai a planilha CAMPANHAS (abas
    `PREM_RCA` + `INDICADORES`) e gera a base "catálogo" de indicadores
    (todo indicador que existe, independente de ter sido batido ou não).
-3. **PREM_RANK_GILLETE** — ranking de prêmio por posição/grupo (Gillette
-   Trimestral) + mapeamento supervisor→grupo de rank.
+3. **PREM_RANK_GILLETTE_RCA** — ranking de prêmio por posição/grupo
+   (Gillette Trimestral, nível RCA) + mapeamento supervisor→grupo de
+   rank. Renomeado de `PREM_RANK_GILLETE` (sem `_RCA`) em 2026-08-27
+   quando a aba da planilha foi renomeada.
+3.1. **PREM_RANK_GILLETTE_SUP** — mesma estrutura do item 3, mas ranking
+   a nível de Supervisor (aba nova na planilha). Adicionado em
+   2026-08-27, **só extração/transformação por enquanto** — ainda não
+   ligado a nenhum cálculo de premiação (uso futuro, conforme pedido do
+   usuário). QVDs: `TRF_PREM_RANK_GILLETTE_SUP_AAAA_MM.qvd`,
+   `TRF_SUP_GRUPO_GILLETTE_SUP_AAAA_MM.qvd`.
 4. **Fato Vendas Trimestre Fixo** (Seção + Departamento) — consolida os 3
    meses do trimestre calendário atual (T1-T4, alinhado ao trimestre
    civil).
@@ -125,7 +133,7 @@ ficam residentes, associadas ao restante do modelo.
 | Campanha Gillette (Trimestral)         | Sim — seções "Fato Vendas Trimestre Fixo" + Ranking Gillette |
 | Campanha Mensal (indicadores gerais)   | Sim — Fato Vendas Mês Atual (Seção/Departamento/RCA)       |
 | Regra de devolução (Gillette e Mensal) | Sim — blocos RCA_DEVOL e RCA_DEVOL_RANK                    |
-| Mix Mínimo Contrato                    | Sim — seção 7 completa (ver item 4)                        |
+| Mix Mínimo Contrato                    | Sim — seção 7, dentro do bloco Vendas Trimestre Móvel desde 2026-08-27 (ver item 4) |
 | Escolha Certa Especial (R$20/positivação, só RCA) | **Parcial** — o script gera o KPI `FAIXA ESCOLHA CERTA` (soma de `QTD_ESCOLHA_CERTA` por faixa), mas o cálculo do valor R$20 por positivação não aparece neste `.QVS`. Verificar se é feito em outra camada (dashboard/expressão) ou está faltando. |
 | Indicador Listing (`LISTING INICIATIVAS--100% CARTEIRA`) | **Sim (implementado e ligado ao TRF_BASE_RCA em 2026-08-26)** — seção 8 do script (cálculo) + seções 3.2/8.2 (Realizado/Meta ligados à base unificada), ver item 4.1 abaixo. Regra: cliente compra TODOS os produtos da aba `LISTING_PRODUTOS` do seu `RAMO`, cada produto exige qtd mínima em CAIXAS; RCA só ganha se 100% da carteira completar. Validado rodando no Qlik Sense. |
 | Campanha PET (Supervisor Suzy 240+340→240340) | **Não encontrado neste arquivo.** Nem o indicador PET nem o código fictício 240340 aparecem no script lido. Pode estar em outro `.qvs`/tab do projeto Qlik. |
@@ -135,28 +143,64 @@ ficam residentes, associadas ao restante do modelo.
 > supervisores fictícios (7374/240340) vivem em outro script/tab antes de
 > assumir que estão faltando.
 
-## 4. Mix Mínimo — como funciona no script (seção 7, dentro do bloco "Mês Atual")
+## 4. Mix Mínimo — como funciona no script (seção 7, dentro do bloco "Vendas Trimestre Móvel")
 
 Implementa a regra do `CAMPANHAS.MD`: cliente principal precisa positivar
 um número mínimo de **grupos de produto** dentro da sua **Categoria**
 (DPP/CC/HFS/NMR), e o RCA só ganha se **todos** os seus clientes
 principais baterem (regra tudo-ou-nada).
 
+> **Mudança de regra de negócio em 2026-08-27** (a pedido do usuário,
+> depois de validar a nova estrutura da planilha):
+> 1. **Realizado agora é medido sobre a janela móvel de 3 meses**, não
+>    mais só o mês atual — o cálculo inteiro foi realocado do bloco
+>    "Vendas Mês Atual" para o bloco "Vendas Trimestre Móvel", e passou
+>    a consumir `TMP_VENDAS_TRIMESTRE_MOVEL` em vez de `TMP_VENDAS`.
+> 2. **`QTDMIN` agora vem da aba `MIX_MIN`** (um valor por **cliente**,
+>    aplicado igual a todos os grupos que ele precisa comprar) — antes
+>    vinha da aba `MIXMIN_GRUPO_PRODUTO` (um valor por **grupo**, igual
+>    pra todo cliente da mesma categoria). Confirmado direto na
+>    planilha: `MIXMIN_GRUPO_PRODUTO` não tem mais coluna `QTDMIN`, e
+>    `NOMEGRUPO`/`CATEGORIA` agora vêm preenchidos em toda linha do
+>    grupo (antes só na 1ª linha, efeito de célula mesclada) — por isso
+>    a extração desses dois campos trocou de
+>    `WHERE Not IsNull(QTDMIN)` para `LOAD DISTINCT`.
+> 3. **Chave composta Cliente+Filial** (`_ChaveClienteFilial = CodClientePrincipal & '|' & CodFilial`)
+>    em toda comparação de compra — confirmado direto na planilha que o
+>    mesmo `CODCLIPRINC` pode representar clientes diferentes em filiais
+>    diferentes (ex: cliente `334788` aparece nas filiais `1` e `3` na
+>    aba `MIX_MIN`). Usar só `CodClientePrincipal` misturaria as compras
+>    desses dois clientes.
+>
+> **O contrato de saída não mudou**: mesmo nome de QVD
+> (`FATO_MIXMINIMO_RCA_MES_AAAA_MM.qvd`), mesmos campos
+> (`Indicador='MIX MINIMO'`, `TipoIndicador='DEPARTAMENTO'`,
+> `PeriodoIndicador='MESATUAL'`, `ClasseIndicador='MANUAL'`, `Meta=1`).
+> A Modelagem (`REALIZADO_MIXMINIMO`/`META_MIXMINIMO`) não precisou de
+> nenhuma alteração.
+
 Passo a passo (nomes de tabela no script):
-1. `TRF_MIX_MIN` — Cliente Principal × Categoria × Objetivo (nº de grupos
-   a bater), vindo da aba `MIX_MIN`.
+1. `TRF_MIX_MIN` — Cliente Principal × Filial × Categoria × Objetivo ×
+   **QtdMin** (agora por cliente), vindo da aba `MIX_MIN`, mais o campo
+   `_ChaveClienteFilial`.
 2. `TRF_MIXMIN_PRODUTO_GRUPO` / `TRF_MIXMIN_GRUPO` — mapeamento
-   Produto→Grupo e Grupo→QtdMin, vindo da aba `MIXMIN_GRUPO_PRODUTO`
-   (colunas mescladas na planilha original, tratadas com cuidado).
-3. `MIXMIN_ELEGIVEL` — join Cliente×Grupo por Categoria (todo cliente
-   pareado com todos os grupos da própria categoria).
+   Produto→**NomeGrupo** e NomeGrupo→Categoria (sem QtdMin nem
+   CodGrupo — a chave de negócio do grupo é o nome, não o código
+   numérico, que não é único entre categorias), vindo da aba
+   `MIXMIN_GRUPO_PRODUTO`.
+3. `MIXMIN_ELEGIVEL` — join Cliente(+Filial)×**NomeGrupo** por Categoria
+   (todo cliente pareado com todos os grupos da própria categoria);
+   `QtdMin` já vem do próprio cliente, sem precisar de join extra.
 4. `TEMP_VENDAS_MIXMIN` → `COMPRA_CLIENTE_GRUPO` — quantidade realmente
-   comprada por Cliente Principal + Grupo (só conta valor > 0).
-5. `MIXMIN_GRUPO_FLAG` — grupo positivado se `QtdComprada >= QtdMin`.
-6. `MIXMIN_CLIENTE_FLAG` — cliente atingiu objetivo se
+   comprada por **Cliente+Filial** + **NomeGrupo**, **na janela móvel de
+   3 meses** (só conta valor > 0).
+5. `MIXMIN_GRUPO_FLAG` — grupo positivado se
+   `QtdComprada >= QtdMin (do cliente)`.
+6. `MIXMIN_CLIENTE_FLAG` — cliente (+filial) atingiu objetivo se
    `GruposPositivados >= Objetivo`.
-7. `FATO_MIXMINIMO_RCA` — `Min()` do flag por cliente agregado por RCA:
-   só fica 1 (100%) se **todos** os clientes do RCA bateram.
+7. `FATO_MIXMINIMO_RCA` — `Min()` do flag por cliente+filial agregado
+   por RCA: só fica 1 (100%) se **todos** os clientes (em qualquer
+   filial) do RCA bateram.
 
 QVD final: `FATO_MIXMINIMO_RCA_MES_AAAA_MM.qvd`. Esse mesmo QVD alimenta
 tanto o Realizado quanto a Meta do indicador "MIX MINIMO" na montagem de
@@ -327,6 +371,124 @@ script editor carregou normalmente, sem erros, com as 3 abas
 (Transformação/Modelagem/Carregamento) reconhecidas corretamente.**
 Ainda não ligado ao `TRF_BASE_RCA` — ver Pontos em aberto.
 
+**2026-08-27 (3ª leva):** A planilha `CAMPANHAS_AAAA_MM.xlsx` mudou de
+estrutura: a aba `PREM_RANK_GILLETE` foi renomeada para
+`PREM_RANK_GILLETTE_RCA`, e uma aba nova `PREM_RANK_GILLETTE_SUP` foi
+adicionada (mesmo layout, ranking a nível de Supervisor em vez de RCA).
+Script atualizado: `table is PREM_RANK_GILLETE` → `PREM_RANK_GILLETTE_RCA`
+nos dois LOADs existentes (senão o reload quebraria por não achar a
+aba antiga), e criado um novo bloco espelhado para
+`PREM_RANK_GILLETTE_SUP` (`TRF_PREM_RANK_GILLETTE_SUP`/
+`TRF_SUP_GRUPO_GILLETTE_SUP`) — só extração por enquanto, sem ligação
+com cálculo de premiação (uso futuro, a pedido do usuário). Ver item
+3.1 da seção 2.
+
+> `COD_FILIAL`/`QTDMIN` novos na aba `MIX_MIN` (mencionados acima):
+> **uso confirmado e implementado em 2026-08-27 (4ª leva)**, ver abaixo.
+
+**2026-08-27 (4ª leva):** Mudança de regra de negócio no indicador
+**Mix Mínimo**, a pedido do usuário — ver detalhes completos na seção 4:
+(1) o cálculo inteiro foi **movido do bloco "Vendas Mês Atual" para
+"Vendas Trimestre Móvel"** (Realizado agora soma 3 meses, não 1);
+(2) `QTDMIN` passou a vir da aba `MIX_MIN` (por cliente) em vez de
+`MIXMIN_GRUPO_PRODUTO` (por grupo) — confirmado direto na planilha que
+essa coluna foi removida de `MIXMIN_GRUPO_PRODUTO`; (3) introduzida a
+chave composta `_ChaveClienteFilial` em toda comparação de compra, já
+que o mesmo `CODCLIPRINC` pode repetir em filiais diferentes
+(confirmado: cliente `334788` aparece nas filiais `1` e `3`). O
+contrato de saída (nome do QVD, campos) não mudou, então a Modelagem
+não precisou de nenhum ajuste.
+
+**2026-08-27 (5ª leva) — bug corrigido, achado durante validação pelo
+usuário:** RCA `6026` aparecia com `PercAtingimentoFaturado` somando
+**2** em vez de 1 para o indicador MIX MINIMO (sinal de duplicidade).
+Causa raiz confirmada direto na planilha: **`COD_GRUPO` na aba
+`MIXMIN_GRUPO_PRODUTO` não é um id único global — ele se repete por
+Categoria** (Grupo 1 existe em DPP, HFS, C&C e NRM, cada um um produto
+diferente). 258 dos 332 produtos estão associados a mais de um par
+(Grupo, Categoria) — ex: produto `219481` é `(Grupo 1, DPP)` e também
+`(Grupo 1, HFS)`. `TRF_MIXMIN_PRODUTO_GRUPO` não carregava `Categoria`,
+então o cruzamento de vendas→grupo (seção 7.5) batia em **todos** os
+grupos com aquele número, de categorias não relacionadas, inflando a
+quantidade comprada. Corrigido: `TRF_MIXMIN_PRODUTO_GRUPO` agora carrega
+`Categoria`; criado `MAP_CLIENTE_CATEGORIA` (Cliente+Filial→Categoria,
+a partir de `TRF_MIX_MIN`) para trazer a categoria do próprio cliente
+para `TEMP_VENDAS_MIXMIN`; o cruzamento agora usa a chave composta
+`CodProduto + Categoria`.
+
+> **Ajuste adicional no mesmo dia, a pedido do usuário**: mesmo com
+> `Categoria` no cruzamento, agregar por `CodGrupo` ainda dependia de um
+> código numérico que **não é o identificador de negócio real do grupo**
+> — confirmado na planilha que o mesmo `NOMEGRUPO` pode ter `CodGrupo`
+> diferente em categorias diferentes (103 dos 186 nomes de grupo caem
+> nesse caso). Como `NOMEGRUPO` já vem preenchido em toda linha de
+> produto da aba (não só na primeira linha do grupo), a agregação inteira
+> foi trocada de `CodGrupo` para `NomeGrupo` — `TRF_MIXMIN_PRODUTO_GRUPO`
+> e `TRF_MIXMIN_GRUPO` não carregam mais `COD_GRUPO`, e todas as chaves
+> de join/agregação da seção 7 (7.4 `MIXMIN_ELEGIVEL`, 7.5
+> `COMPRA_CLIENTE_GRUPO`, 7.6 `LEFT JOIN`) usam `NomeGrupo` no lugar de
+> `CodGrupo`. Confirmado que, dentro da mesma Categoria, `CodGrupo` e
+> `NomeGrupo` já eram 1:1 (0 inconsistências), então essa troca não muda
+> o resultado matemático da versão anterior — só remove a dependência de
+> um código cuja unicidade só valia por acidente do agrupamento por
+> Categoria, deixando o identificador de negócio real como chave.
+> **Ainda não validado no Qlik Sense após esta correção.**
+
+> **Segundo problema encontrado durante a mesma investigação, NÃO
+> corrigido no script** (usuário optou por corrigir na planilha): a
+> categoria de cliente aparece grafada como `NMR` na aba `MIX_MIN` mas
+> como `NRM` na aba `MIXMIN_GRUPO_PRODUTO` (letras trocadas). Como a
+> seção 7.4 faz um `JOIN` (inner join) por `Categoria`, clientes com
+> categoria `NMR` não encontram nenhum grupo correspondente e **somem
+> inteiramente** de `MIXMIN_ELEGIVEL` — o que pode fazer o RCA inteiro
+> sumir do indicador Mix Mínimo (se todos os clientes dele forem `NMR`)
+> ou dar resultado incorreto (se o RCA tiver clientes mistos, o cliente
+> `NMR` é ignorado na regra tudo-ou-nada). **Ação: corrigir a grafia na
+> planilha** (unificar `NMR`/`NRM` para o mesmo valor nas duas abas)
+> antes da próxima carga.
+
+**2026-08-27 (6ª leva) — bug corrigido, achado após o usuário confirmar
+que o "2" persistia mesmo depois da correção acima e do ajuste
+NMR/NRM na planilha:** o problema não estava mais no cálculo do
+Mix Mínimo em si (dimensão simples já mostrava `PercAtingimentoFaturado
+= 1` corretamente para o RCA `6026`) — era uma **referência circular na
+Modelagem**, visível no diagrama do modelo de dados do Qlik: `Sum()`
+sobre o campo duplicava o valor, mas o campo como dimensão não mudava
+(sintoma clássico de loop de associação). Duas causas encontradas na
+seção "PREMIAÇÃO GILLETTE TRIMESTRAL":
+1. **`BASE_GILLETTE_TRI` (que vira `PREMIACAO_GILLETTE_TRI`) carregava
+   `CodSupervisor` e `PercAtingimentoFaturado`** com os mesmos nomes que
+   já existem em `BASE_RCA_INDICADORES_REALIZADO`** — como as duas
+   tabelas permanecem no modelo final, isso as ligava por **três campos
+   simultâneos** (`CodRca` + `CodSupervisor` + `PercAtingimentoFaturado`),
+   o que o Qlik também trata como referência circular entre duas
+   tabelas. **Corrigido**: renomeados para `CodSupervisorGillette` e
+   `PercAtingimentoFaturadoGillette` dentro de `BASE_GILLETTE_TRI`
+   (e a referência em `RANKING_GILLETTE` atualizada) — agora `CodRca` é
+   o único campo em comum entre as duas tabelas, como deveria ser.
+2. **`BASE_GILLETTE_TRI` também copiava (via `ApplyMap`) o valor de
+   devolução de `GANHO_FINAL_RCA` usando o MESMO nome de campo**
+   `PercDevolucaoRcaFaturado` que já existe em `GANHO_FINAL_RCA` — isso
+   ligava `GANHO_FINAL_RCA` e `PREMIACAO_GILLETTE_TRI` diretamente, e
+   como as duas também se ligam a `BASE_RCA_INDICADORES_REALIZADO` via
+   `CodRca`, fechava um loop de 3 tabelas (exatamente o mostrado no
+   diagrama do modelo de dados que o usuário enviou).
+
+   **Correção original errada (2026-08-27, corrigida na hora):** cheguei
+   a colocar um `DROP TABLE GANHO_FINAL_RCA;` achando que era uma tabela
+   intermediária esquecida — **estava errado**: `GANHO_FINAL_RCA` é a
+   base de premiação final do RCA, usada pelo usuário para validar
+   contra o total de devolução dele, e precisa continuar no modelo.
+   Revertido o `DROP` imediatamente após o usuário apontar o problema.
+
+   **Correção final**: renomeada a cópia dentro de `BASE_GILLETTE_TRI`
+   para `PercDevolucaoRcaFaturadoGillette` (só usada internamente para o
+   cálculo do ranking Gillette) — `GANHO_FINAL_RCA` continua intacta no
+   modelo, com todos os seus campos (incluindo o `PercDevolucaoRcaFaturado`
+   original), ligada a `BASE_RCA_INDICADORES_REALIZADO` e a
+   `PREMIACAO_GILLETTE_TRI` **só por `CodRca`** (formato estrela, sem
+   ciclo). **Ainda não validado no Qlik Sense.**
+
 ## 7. Pontos em aberto para continuar o projeto
 
 - Confirmar onde vivem os indicadores **PET** e os supervisores
@@ -335,6 +497,19 @@ Ainda não ligado ao `TRF_BASE_RCA` — ver Pontos em aberto.
 - Confirmar se o valor de R$20 por positivação do **Escolha Certa
   Especial** é calculado em algum lugar (script ou app Qlik) — não
   localizado aqui.
+- **Corrigir na planilha** a grafia divergente `NMR` (aba `MIX_MIN`) vs
+  `NRM` (aba `MIXMIN_GRUPO_PRODUTO`) — enquanto não for corrigido,
+  clientes dessa categoria ficam de fora do cálculo de Mix Mínimo.
+- Validar no Qlik Sense as três correções do bug de duplicidade do **Mix
+  Mínimo** (cruzamento Produto+Categoria na seção 4, e as duas
+  referências circulares na Modelagem/Gillette) — conferir que
+  `Sum([PercAtingimentoFaturado])` não soma mais valores > 1 num gráfico
+  (ex: RCA 6026) e que o diagrama do modelo de dados mostra
+  `GANHO_FINAL_RCA` **ainda presente** (não deve sumir - é a base de
+  premiação final do RCA), mas ligada a `BASE_RCA_INDICADORES_REALIZADO`
+  e `PREMIACAO_GILLETTE_TRI` só por `CodRca`, sem loop entre as 3.
+- **PREM_RANK_GILLETTE_SUP** foi só transformado (extração), ainda sem
+  nenhum cálculo de premiação por Supervisor ligado a ele.
 - **Vendas Trimestre Móvel ainda não está ligado ao `TRF_BASE_RCA`** —
   hoje só existe como transformador (aba Transformação). Para aparecer
   na tabela unificada do dashboard, precisaria: (1) uma linha de
