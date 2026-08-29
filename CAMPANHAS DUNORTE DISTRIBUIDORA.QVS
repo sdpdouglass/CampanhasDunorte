@@ -1958,6 +1958,48 @@ ELSE
 ENDIF
 
 
+///////////////////////////////////////////////////////////////////////////
+// TRANSFORMADOR SUP_DEVOL_RANK (planilha CAMPANHAS)
+// Faixa maxima de % devolucao que o SUPERVISOR pode ter para nao ser
+// zerado no ranking do Gillette Trimestral - mesma estrutura da
+// RCA_DEVOL_RANK acima, a nivel de SUPERVISOR.
+// TODO: verify - nomes das colunas da aba SUP_DEVOL_RANK assumidos
+// identicos aos da aba RCA_DEVOL_RANK, trocando COD_RCA por COD_SUP.
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemDevolRankSup  = '$(vPathMetasPG)';
+SET vPathDestinoDevolRankSup = '$(vPathCampanhas)';
+
+LET vAnoDevolRankSup    = Year(Today());
+LET vMesTxtDevolRankSup = Num(Month(Today()), '00');
+
+LET vArquivoDevolRankSup     = '$(vPathOrigemDevolRankSup)CAMPANHAS_$(vAnoDevolRankSup)_$(vMesTxtDevolRankSup).xlsx';
+LET vNomeArquivoDevolRankSup = 'TRF_SUP_DEVOL_RANK_$(vAnoDevolRankSup)_$(vMesTxtDevolRankSup).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoDevolRankSup)')) THEN
+
+    TRACE Carregando SUP_DEVOL_RANK $(vMesTxtDevolRankSup)/$(vAnoDevolRankSup)...;
+
+    TRF_SUP_DEVOL_RANK:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_SUP                AS CodSupervisor,
+        FAIXA                  AS Faixa
+    FROM [$(vArquivoDevolRankSup)]
+    (ooxml, embedded labels, table is SUP_DEVOL_RANK);
+
+    STORE TRF_SUP_DEVOL_RANK INTO [$(vPathDestinoDevolRankSup)$(vNomeArquivoDevolRankSup)] (qvd);
+
+    TRACE QVD de Faixa Devolucao Rank Gillette Supervisor gerado com sucesso: $(vPathDestinoDevolRankSup)$(vNomeArquivoDevolRankSup);
+
+    DROP TABLE TRF_SUP_DEVOL_RANK;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtDevolRankSup)/$(vAnoDevolRankSup) ainda nao disponivel ($(vArquivoDevolRankSup)). QVD de Faixa Devolucao Rank Supervisor nao foi gerado.;
+
+ENDIF
+
+
 ///$tab Modelagem
 ///////////////////////////////////////////////////////////////////////////
 // TRF_BASE_RCA + REALIZADO (TRIMESTRE FIXO + MES) + META - CAMPANHA GILLETTE
@@ -3074,6 +3116,169 @@ DROP TABLE TEMP_GANHOS_SUP;
 // - e a base de premiacao final do supervisor, um registro por CodSupervisor.
 
 
+///////////////////////////////////////////////////////////////////////////
+// PREMIACAO GILLETTE TRIMESTRAL - RANKING POR GRUPO DE SUPERVISORES
+// (RANKING A NIVEL DE SUPERVISOR)
+// Mesma logica de 5 passos do ranking Gillette do RCA acima, mas aqui
+// quem compete e o SUPERVISOR (nao o RCA individual): cada supervisor
+// compete dentro do GrupoRank configurado na aba PREM_RANK_GILLETTE_SUP
+// (colunas COD_SUP/GRUPO_SUP, ja extraidas em TRF_SUP_GRUPO_GILLETTE_SUP)
+// - grupo esse que agrupa SUPERVISORES entre si, diferente do GrupoRank
+// do ranking de RCA (que agrupa supervisores para fins de ranquear os
+// RCAs de cada um). A posicao (por % de atingimento da meta trimestral
+// do TIME do supervisor, do maior para o menor) define o premio,
+// consultado em TRF_PREM_RANK_GILLETTE_SUP.
+//
+// Todos os campos aqui usam sufixo "Sup"/"GilletteSup" de proposito -
+// mesmo motivo do bloco RCA: esta tabela permanece no modelo de dados e
+// NAO deve compartilhar nenhum campo com BASE_SUP_INDICADORES_REALIZADO,
+// GANHO_FINAL_SUP OU com a PREMIACAO_GILLETTE_TRI do RCA (ela tem um
+// campo "GrupoRank" e um "Posicao"/"Premio" que representam um GRUPO
+// DIFERENTE - grupo de RCA, nao de Supervisor - usar os mesmos nomes
+// aqui associaria as duas tabelas por um campo que NAO significa a
+// mesma coisa nos dois lados).
+///////////////////////////////////////////////////////////////////////////
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    1. MAPEAMENTO SUPERVISOR -> GRUPO DE RANKING (ranking de Supervisor)
+
+//////////////////////////////////////////////////////////////////////////*/
+MAP_GRUPO_GILLETTE_SUP:
+MAPPING LOAD
+    CodSupervisor,
+    GrupoRank
+FROM [$(vPathDestinoRankSup)$(vNomeArquivoSupGrupoSup)]
+(qvd);
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    2. BASE DE SUPERVISORES COM O INDICADOR (todos, sem filtro de meta)
+       Mesma regra de devolucao do RCA: se PercDevolucaoSupFaturado do
+       supervisor (calculado em GANHO_FINAL_SUP) ultrapassar a Faixa
+       maxima permitida (de TRF_SUP_DEVOL_RANK), o % de atingimento usado
+       no RANKING vira 0 - empurra o supervisor pro fim do seu grupo sem
+       remove-lo da disputa nem alterar o PercAtingimentoFaturadoSup
+       original usado em outros calculos (ex: Ganho por indicador).
+
+//////////////////////////////////////////////////////////////////////////*/
+MAP_PERC_DEVOL_FAT_SUP:
+MAPPING LOAD
+    CodSupervisor,
+    PercDevolucaoSupFaturado
+RESIDENT GANHO_FINAL_SUP;
+
+MAP_FAIXA_DEVOL_RANK_SUP:
+MAPPING LOAD
+    CodSupervisor,
+    Faixa
+FROM [$(vPathDestinoDevolRankSup)$(vNomeArquivoDevolRankSup)]
+(qvd);
+
+BASE_GILLETTE_TRI_SUP:
+LOAD
+    CodSupervisor AS CodSupervisorGilletteSup,
+    ApplyMap('MAP_GRUPO_GILLETTE_SUP', CodSupervisor, '#ND') AS GrupoRankSup,
+    PercAtingimentoFaturadoSup AS PercAtingimentoFaturadoGilletteSup,
+
+    ApplyMap('MAP_PERC_DEVOL_FAT_SUP', CodSupervisor) AS PercDevolucaoSupFaturadoGilletteSup,
+    ApplyMap('MAP_FAIXA_DEVOL_RANK_SUP', CodSupervisor) AS FaixaDevolucaoRankSup,
+
+    // Se nao ha Faixa cadastrada para o supervisor, nao penaliza (mantem
+    // o Perc original) - ApplyMap sem default retorna Null, e a
+    // comparacao "> Null" nunca e verdadeira.
+    If(
+        ApplyMap('MAP_PERC_DEVOL_FAT_SUP', CodSupervisor) > ApplyMap('MAP_FAIXA_DEVOL_RANK_SUP', CodSupervisor),
+        0,
+        PercAtingimentoFaturadoSup
+    ) AS PercAtingimentoFaturadoRankSup,
+
+    // Flag explicita: o supervisor foi zerado no rank por causa da devolucao?
+    If(
+        ApplyMap('MAP_PERC_DEVOL_FAT_SUP', CodSupervisor) > ApplyMap('MAP_FAIXA_DEVOL_RANK_SUP', CodSupervisor),
+        1, 0
+    ) AS FlagZeradoPorDevolucaoSup
+
+RESIDENT BASE_SUP_INDICADORES_REALIZADO
+WHERE IndicadorSup = 'GILLETTE TRIMESTRAL'
+  AND Not IsNull(PercAtingimentoFaturadoSup);
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    3. RANKING - SO ENTRE OS ELEGIVEIS (>= 100% da meta, JA VALIDADO
+       CONTRA A DEVOLUCAO)
+       Mesmo padrao classico do Qlik do ranking de RCA: ORDER BY
+       GrupoRankSup + metrica DESC, Peek() compara com a linha anterior
+       ja processada. WHERE usa PercAtingimentoFaturadoRankSup (ja
+       zerado pela regra de devolucao acima), nao o
+       PercAtingimentoFaturadoGilletteSup original - mesmo bug corrigido
+       no ranking de RCA em 2026-08-29.
+
+//////////////////////////////////////////////////////////////////////////*/
+RANKING_GILLETTE_SUP:
+LOAD
+    CodSupervisorGilletteSup,
+    GrupoRankSup,
+    If(GrupoRankSup = Peek('GrupoRankSup'), Peek('PosicaoSup') + 1, 1) AS PosicaoSup
+RESIDENT BASE_GILLETTE_TRI_SUP
+WHERE PercAtingimentoFaturadoRankSup >= 1   // só participa do rank quem bateu 100% ou mais, já com devolução validada
+ORDER BY GrupoRankSup, PercAtingimentoFaturadoRankSup Desc;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    4. PREMIO POR POSICAO NO RANKING
+       Chave composta GrupoRankSup + PosicaoSup - supervisor que ficou
+       alem do numero de posicoes premiadas do seu grupo nao encontra
+       match - PremioSup fica Null, tratado como 0.
+
+//////////////////////////////////////////////////////////////////////////*/
+TRF_PREM_RANK_GILLETTE_SUP:
+LOAD
+    GrupoRank AS GrupoRankSup,
+    Posicao   AS PosicaoSup,
+    Premio    AS PremioSup
+FROM [$(vPathDestinoRankSup)$(vNomeArquivoPremRankSup)]
+(qvd);
+
+LEFT JOIN (RANKING_GILLETTE_SUP)
+LOAD * RESIDENT TRF_PREM_RANK_GILLETTE_SUP;
+
+DROP TABLE TRF_PREM_RANK_GILLETTE_SUP;
+
+// A partir daqui so precisamos de CodSupervisorGilletteSup + PosicaoSup
+// + PremioSup para juntar de volta na base completa - descarta
+// GrupoRankSup para nao virar campo em comum acidental no proximo LEFT JOIN.
+DROP FIELD GrupoRankSup FROM RANKING_GILLETTE_SUP;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    5. JUNTA RANKING/PREMIO DE VOLTA NA BASE COMPLETA
+       Unico campo em comum agora e CodSupervisorGilletteSup - supervisores
+       que nao bateram 100% (e por isso nao estao em RANKING_GILLETTE_SUP)
+       ficam com PosicaoSup/PremioSup em branco, mas continuam na tabela
+       com o PercAtingimentoFaturadoGilletteSup visivel.
+
+//////////////////////////////////////////////////////////////////////////*/
+LEFT JOIN (BASE_GILLETTE_TRI_SUP)
+LOAD * RESIDENT RANKING_GILLETTE_SUP;
+
+DROP TABLE RANKING_GILLETTE_SUP;
+
+PREMIACAO_GILLETTE_TRI_SUP:
+NoConcatenate
+LOAD
+    *,
+    Alt(PremioSup, 0) AS PremioGilletteTriSup
+RESIDENT BASE_GILLETTE_TRI_SUP;
+
+DROP TABLE BASE_GILLETTE_TRI_SUP;
+
+
 ///$tab Carregamento
 ///////////////////////////////////////////////////////////////////////////
 // CARREGAMENTO - TABELAS FINAIS DO MODELO DE DADOS
@@ -3098,6 +3303,12 @@ DROP TABLE TEMP_GANHOS_SUP;
 //   - GANHO_FINAL_SUP: Total de ganho por Supervisor já com % de
 //     repasse por devolução aplicado (grão: CodSupervisor) - mesma
 //     lógica de GANHO_FINAL_RCA, a nível de Supervisor.
+//   - PREMIACAO_GILLETTE_TRI_SUP: Realizado + ranking + prêmio da
+//     campanha Gillette Trimestral por SUPERVISOR (grão: CodSupervisor,
+//     exposto como CodSupervisorGilletteSup) - ranking entre supervisores
+//     do mesmo grupo (aba PREM_RANK_GILLETTE_SUP), não entre RCAs.
+//     Tabela isolada de propósito (nenhum campo em comum com as demais,
+//     mesmo padrão da PREMIACAO_GILLETTE_TRI do RCA).
 ///////////////////////////////////////////////////////////////////////////
 TRACE ==============================================;
 TRACE Carga do modelo de dados concluida.;
