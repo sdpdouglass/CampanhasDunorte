@@ -275,6 +275,7 @@ FOR vMes = vMesIni to vMesFim
 
         TMP_VENDAS:
         LOAD
+            "Cod Supervisor",
             "Cod Filial",
             "Cod RCA",
             "Cod Secao",
@@ -424,6 +425,7 @@ FOR vOffsetMesMovel = -2 to 0
         TMP_VENDAS_TRIMESTRE_MOVEL:
         LOAD
             "Cod Filial",
+            "Cod Supervisor",
             "Cod RCA",
             "Cod Cliente",
             "Cod Secao",
@@ -1037,6 +1039,7 @@ IF Not IsNull(FileSize('$(vArquivoMes)')) THEN
     TMP_VENDAS:
     LOAD
         "Cod Filial",
+        "Cod Supervisor",
         "Cod RCA",
         "Cod Cliente",
         ApplyMap('MAP_CLIENTE_PRINC',"Cod Cliente",'#ND') as "Cod Cliente Principal",
@@ -1859,6 +1862,102 @@ ELSE
 ENDIF
 
 
+///////////////////////////////////////////////////////////////////////////
+// TRANSFORMADOR PREM_SUP (planilha CAMPANHAS)
+// Extrai a aba PREM_SUP (Cod Supervisor, Indicador, Ganho, Faixa) e salva
+// um QVD mensal - mesma estrutura do PREM_RCA acima, mas com a
+// premiacao configurada a nivel de SUPERVISOR. GILLETTE TRIMESTRAL
+// excluido aqui pelo mesmo motivo do PREM_RCA (calculado a parte).
+// TODO: verify - nomes das colunas da aba PREM_SUP assumidos identicos
+// aos da aba PREM_RCA, trocando COD_RCA por COD_SUP (mesma convencao ja
+// usada na aba PREM_RANK_GILLETTE_SUP, coluna COD_SUP).
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemPremSup  = '$(vPathMetasPG)';
+SET vPathDestinoPremSup = '$(vPathCampanhas)';
+
+LET vAnoPremSup    = Year(Today());
+LET vMesTxtPremSup = Num(Month(Today()), '00');
+
+LET vArquivoPremSup     = '$(vPathOrigemPremSup)CAMPANHAS_$(vAnoPremSup)_$(vMesTxtPremSup).xlsx';
+LET vNomeArquivoPremSup = 'TRF_PREM_SUP_$(vAnoPremSup)_$(vMesTxtPremSup).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoPremSup)')) THEN
+
+    TRACE Carregando PREM_SUP $(vMesTxtPremSup)/$(vAnoPremSup)...;
+
+    TRF_PREM_SUP:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_SUP                AS CodSupervisor,
+        INDICADOR               AS Indicador,
+        GANHO                   AS Ganho,
+        FAIXA                   AS Faixa
+    FROM [$(vArquivoPremSup)]
+    (ooxml, embedded labels, table is PREM_SUP)
+    WHERE INDICADOR <> 'GILLETTE TRIMESTRAL';
+
+    STORE TRF_PREM_SUP INTO [$(vPathDestinoPremSup)$(vNomeArquivoPremSup)] (qvd);
+
+    TRACE QVD de Premiacao Supervisor gerado com sucesso: $(vPathDestinoPremSup)$(vNomeArquivoPremSup);
+
+    DROP TABLE TRF_PREM_SUP;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtPremSup)/$(vAnoPremSup) ainda nao disponivel ($(vArquivoPremSup)). QVD de Premiacao Supervisor nao foi gerado.;
+
+ENDIF
+
+
+///////////////////////////////////////////////////////////////////////////
+// TRANSFORMADOR SUP_DEVOL (planilha CAMPANHAS)
+// Extrai a aba SUP_DEVOL (4 faixas de % devolucao + % de repasse do
+// ganho por faixa, especificas de cada SUPERVISOR) e salva um QVD
+// mensal - mesma estrutura do RCA_DEVOL acima, a nivel de SUPERVISOR.
+// TODO: verify - nomes das colunas da aba SUP_DEVOL assumidos identicos
+// aos da aba RCA_DEVOL, trocando COD_RCA por COD_SUP.
+///////////////////////////////////////////////////////////////////////////
+SET vPathOrigemDevolSup  = '$(vPathMetasPG)';
+SET vPathDestinoDevolSup = '$(vPathCampanhas)';
+
+LET vAnoDevolSup    = Year(Today());
+LET vMesTxtDevolSup = Num(Month(Today()), '00');
+
+LET vArquivoDevolSup     = '$(vPathOrigemDevolSup)CAMPANHAS_$(vAnoDevolSup)_$(vMesTxtDevolSup).xlsx';
+LET vNomeArquivoDevolSup = 'TRF_SUP_DEVOL_$(vAnoDevolSup)_$(vMesTxtDevolSup).qvd';
+
+IF Not IsNull(FileSize('$(vArquivoDevolSup)')) THEN
+
+    TRACE Carregando SUP_DEVOL $(vMesTxtDevolSup)/$(vAnoDevolSup)...;
+
+    TRF_SUP_DEVOL:
+    LOAD
+        Date(MonthStart(DATA)) AS DATA,
+        COD_SUP                AS CodSupervisor,
+        FAIXA1                 AS Faixa1,
+        GANHO1                 AS GanhoPerc1,
+        FAIXA2                 AS Faixa2,
+        GANHO2                 AS GanhoPerc2,
+        FAIXA3                 AS Faixa3,
+        GANHO3                 AS GanhoPerc3,
+        FAIXA4                 AS Faixa4,
+        GANHO4                 AS GanhoPerc4
+    FROM [$(vArquivoDevolSup)]
+    (ooxml, embedded labels, table is SUP_DEVOL);
+
+    STORE TRF_SUP_DEVOL INTO [$(vPathDestinoDevolSup)$(vNomeArquivoDevolSup)] (qvd);
+
+    TRACE QVD de Faixas Devolucao Supervisor gerado com sucesso: $(vPathDestinoDevolSup)$(vNomeArquivoDevolSup);
+
+    DROP TABLE TRF_SUP_DEVOL;
+
+ELSE
+
+    TRACE >>> ATENCAO: planilha CAMPANHAS $(vMesTxtDevolSup)/$(vAnoDevolSup) ainda nao disponivel ($(vArquivoDevolSup)). QVD de Faixas Devolucao Supervisor nao foi gerado.;
+
+ENDIF
+
+
 ///$tab Modelagem
 ///////////////////////////////////////////////////////////////////////////
 // TRF_BASE_RCA + REALIZADO (TRIMESTRE FIXO + MES) + META - CAMPANHA GILLETTE
@@ -2660,11 +2759,20 @@ WHERE Indicador = 'GILLETTE TRIMESTRAL'
 
 /*//////////////////////////////////////////////////////////////////////////
 
-    3. RANKING - SÓ ENTRE OS ELEGÍVEIS (>= 100% da meta)
+    3. RANKING - SÓ ENTRE OS ELEGÍVEIS (>= 100% da meta, JÁ VALIDADO
+       CONTRA A DEVOLUÇÃO)
        WHERE aqui restringe o cálculo de posição a quem bateu a meta -
        quem não bateu simplesmente não entra nesta tabela temporária,
        então nunca ocupa uma posição nem "atrapalha" a contagem dos que
-       bateram.
+       bateram. Usa PercAtingimentoFaturadoRank (não o
+       PercAtingimentoFaturadoGillette original) de propósito: é o %
+       que já foi zerado pela regra de devolução (seção 2 acima) quando
+       o RCA estourou a Faixa máxima permitida - se o WHERE usasse o %
+       original, um RCA zerado por devolução (FlagZeradoPorDevolucao=1)
+       ainda batia 100% pelo % original e entrava indevidamente no
+       ranking/prêmio (bug identificado em 2026-08-29, print da
+       BASE_PREMIACAO_GILLETTE_TRIMESTRAL: CodRca 7506, zerado por
+       devolução, ainda ocupava a Posição 2 e recebia o Prêmio).
        Padrão clássico do Qlik para calcular posição sequencial no
        script: ORDER BY GrupoRank + métrica DESC, e Peek() compara com a
        linha anterior já processada - se o grupo mudou, reinicia a
@@ -2678,7 +2786,7 @@ LOAD
     GrupoRank,
     If(GrupoRank = Peek('GrupoRank'), Peek('Posicao') + 1, 1) AS Posicao
 RESIDENT BASE_GILLETTE_TRI
-WHERE PercAtingimentoFaturadoGillette >= 1   // só participa do rank quem bateu 100% ou mais
+WHERE PercAtingimentoFaturadoRank >= 1   // só participa do rank quem bateu 100% ou mais, já com devolução validada
 ORDER BY GrupoRank, PercAtingimentoFaturadoRank Desc;
 
 
@@ -2734,19 +2842,262 @@ RESIDENT BASE_GILLETTE_TRI;
 DROP TABLE BASE_GILLETTE_TRI;
 
 
+///////////////////////////////////////////////////////////////////////////
+// PREMIACAO FINAL DO SUPERVISOR
+// Mesma logica de 5 partes usada para o RCA (PARTE 2 a PARTE 5 acima),
+// replicada a nivel de SUPERVISOR: agrega o realizado de todos os RCAs
+// de cada supervisor, junta com a premiacao configurada em PREM_SUP
+// (Ganho/Faixa por Indicador) e aplica o % de repasse por faixa de
+// devolucao configurado em SUP_DEVOL - devolucao essa tambem agregada
+// a partir do total de cada RCA do supervisor (via GANHO_FINAL_RCA,
+// que permanece residente de proposito - ver comentario acima).
+//
+// Os campos DATA/Indicador/ClasseIndicador de BASE_SUP_INDICADORES_REALIZADO
+// sao renomeados com sufixo "Sup" (DataSup/IndicadorSup/ClasseIndicadorSup)
+// de proposito - mesmo motivo do CodSupervisorGillette/PercAtingimentoFaturadoGillette
+// la em cima: essa tabela permanece no modelo de dados e o UNICO campo em
+// comum com BASE_RCA_INDICADORES_REALIZADO deve ser CodSupervisor (a
+// chave certa pra ligar "RCA" a "Supervisor dele"), nunca DATA/Indicador/
+// ClasseIndicador tambem ao mesmo tempo - do contrario Qlik criaria uma
+// chave sintetica de 4 campos entre as duas tabelas.
+///////////////////////////////////////////////////////////////////////////
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    PARTE 1 - AGREGACAO DO REALIZADO POR SUPERVISOR/INDICADOR/DATA
+    Soma o realizado de todos os RCAs de cada supervisor e recalcula o %
+    de atingimento em cima dos totais agregados (nao e a media dos % dos
+    RCAs - e o total do time dividido pela meta total do time).
+
+//////////////////////////////////////////////////////////////////////////*/
+// NomeSupervisor/Supervisor NAO sao trazidos aqui de proposito - sao
+// 100% redundantes com CodSupervisor (1:1) e, se copiados com o MESMO
+// nome de campo, virariam campo em comum ADICIONAL com
+// BASE_RCA_INDICADORES_REALIZADO (que ja tem NomeSupervisor/Supervisor),
+// formando uma chave sintetica de varios campos entre as duas tabelas.
+// O nome do supervisor continua disponivel via associacao por
+// CodSupervisor com BASE_RCA_INDICADORES_REALIZADO (ou por
+// Applymap('MAP_SUP', CodSupervisor,...) se precisar como expressao).
+BASE_SUP_INDICADORES_REALIZADO:
+NoConcatenate
+LOAD
+    DATA           AS DataSup,
+    CodSupervisor,
+    Indicador      AS IndicadorSup,
+    ClasseIndicador AS ClasseIndicadorSup,
+
+    Sum(Meta)                 AS MetaSup,
+    Sum(ValorPedidoLiquido)   AS ValorPedidoLiquidoSup,
+    Sum(ValorFaturadoLiquido) AS ValorFaturadoLiquidoSup,
+
+    If(Sum(Meta) > 0, Sum(ValorPedidoLiquido)   / Sum(Meta)) AS PercAtingimentoPedidoSup,
+    If(Sum(Meta) > 0, Sum(ValorFaturadoLiquido) / Sum(Meta)) AS PercAtingimentoFaturadoSup
+
+RESIDENT BASE_RCA_INDICADORES_REALIZADO
+GROUP BY
+    DATA,
+    CodSupervisor,
+    Indicador,
+    ClasseIndicador;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    PARTE 2 - CALCULO DO GANHO POR SUPERVISOR/INDICADOR
+    Mesma regra do RCA: compara o % de atingimento (Pedido e Faturado,
+    separadamente) contra a Faixa exigida daquele indicador para o
+    supervisor. DATA/Indicador de TRF_PREM_SUP sao carregados ja com o
+    sufixo "Sup" para casarem com as colunas renomeadas acima no JOIN.
+
+//////////////////////////////////////////////////////////////////////////*/
+// Ganho/Faixa renomeados para GanhoSup/FaixaSup ja na carga - evita
+// colisao com os campos "Ganho"/"Faixa" que ja existem (vindos do JOIN
+// com TRF_PREM_RCA) em BASE_RCA_INDICADORES_REALIZADO. Mesma razao das
+// renomeacoes acima: o UNICO campo em comum entre as duas tabelas deve
+// continuar sendo CodSupervisor.
+TRF_PREM_SUP:
+LOAD
+    DATA           AS DataSup,
+    CodSupervisor,
+    Indicador      AS IndicadorSup,
+    Ganho          AS GanhoSup,
+    Faixa          AS FaixaSup
+FROM [$(vPathDestinoPremSup)$(vNomeArquivoPremSup)]
+(qvd);
+
+// LEFT JOIN por DataSup + CodSupervisor + IndicadorSup - chave composta
+// correta (mesma logica do PREM_RCA, so que a nivel de Supervisor).
+LEFT JOIN (BASE_SUP_INDICADORES_REALIZADO)
+LOAD * RESIDENT TRF_PREM_SUP;
+
+DROP TABLE TRF_PREM_SUP;
+
+
+BASE_SUP_INDICADORES_REALIZADO_GANHO:
+NoConcatenate
+LOAD
+    *,
+    If(Not IsNull(FaixaSup) And Not IsNull(PercAtingimentoPedidoSup) And PercAtingimentoPedidoSup >= FaixaSup, GanhoSup, 0)   AS GanhoPedidoSup,
+    If(Not IsNull(FaixaSup) And Not IsNull(PercAtingimentoFaturadoSup) And PercAtingimentoFaturadoSup >= FaixaSup, GanhoSup, 0) AS GanhoFaturadoSup
+RESIDENT BASE_SUP_INDICADORES_REALIZADO;
+
+DROP TABLE BASE_SUP_INDICADORES_REALIZADO;
+RENAME TABLE BASE_SUP_INDICADORES_REALIZADO_GANHO TO BASE_SUP_INDICADORES_REALIZADO;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    PARTE 3 - % DE DEVOLUCAO DO SUPERVISOR (PEDIDO e FATURADO)
+    Agrega os totais brutos por RCA (ja calculados em GANHO_FINAL_RCA -
+    TotalDevolucaoRca/TotalPedidoRca/TotalFaturadoRca) para o supervisor
+    dono de cada RCA, via MAP_RCA_SUP. Mesmo motivo do RCA: usa os
+    valores BRUTOS, nao os liquidos, para o denominador nao ficar
+    circular.
+
+//////////////////////////////////////////////////////////////////////////*/
+TEMP_DEVOL_RCA_SUP:
+LOAD
+    ApplyMap('MAP_RCA_SUP', CodRca, '#ND') AS CodSupervisor,
+    TotalDevolucaoRca,
+    TotalPedidoRca,
+    TotalFaturadoRca
+RESIDENT GANHO_FINAL_RCA;
+
+TEMP_DEVOL_SUP:
+NoConcatenate
+LOAD
+    CodSupervisor,
+    Sum(TotalDevolucaoRca) AS TotalDevolucaoSup,
+    Sum(TotalPedidoRca)    AS TotalPedidoSup,
+    Sum(TotalFaturadoRca)  AS TotalFaturadoSup
+RESIDENT TEMP_DEVOL_RCA_SUP
+GROUP BY
+    CodSupervisor;
+
+DROP TABLE TEMP_DEVOL_RCA_SUP;
+
+TEMP_PERC_DEVOL_SUP:
+NoConcatenate
+LOAD
+    *,
+    If(TotalPedidoSup > 0,   TotalDevolucaoSup / TotalPedidoSup)   AS PercDevolucaoSupPedido,
+    If(TotalFaturadoSup > 0, TotalDevolucaoSup / TotalFaturadoSup) AS PercDevolucaoSupFaturado
+RESIDENT TEMP_DEVOL_SUP;
+
+DROP TABLE TEMP_DEVOL_SUP;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    PARTE 4 - FAIXA DE REPASSE APLICAVEL (SUPERVISOR)
+    Mesmas 4 faixas do supervisor (cadastro unico por supervisor, nao
+    duplicado por Pedido/Faturado) - cada % de devolucao percorre a
+    cascata separadamente.
+
+//////////////////////////////////////////////////////////////////////////*/
+// Faixa1..4/GanhoPerc1..4 renomeados com sufixo "Sup" ja na carga - sem
+// isso, colidiriam com os campos de MESMO NOME que TRF_RCA_DEVOL ja
+// deixou em GANHO_FINAL_RCA (que fica residente no modelo), formando
+// uma chave sintetica entre GANHO_FINAL_RCA e GANHO_FINAL_SUP.
+TRF_SUP_DEVOL:
+LOAD
+    CodSupervisor,
+    Faixa1     AS FaixaSup1,
+    GanhoPerc1 AS GanhoPercSup1,
+    Faixa2     AS FaixaSup2,
+    GanhoPerc2 AS GanhoPercSup2,
+    Faixa3     AS FaixaSup3,
+    GanhoPerc3 AS GanhoPercSup3,
+    Faixa4     AS FaixaSup4,
+    GanhoPerc4 AS GanhoPercSup4
+FROM [$(vPathDestinoDevolSup)$(vNomeArquivoDevolSup)] (qvd);
+
+LEFT JOIN (TEMP_PERC_DEVOL_SUP)
+LOAD * RESIDENT TRF_SUP_DEVOL;
+
+DROP TABLE TRF_SUP_DEVOL;
+
+TEMP_PERC_DEVOL_SUP_FINAL:
+NoConcatenate
+LOAD
+    *,
+    If(PercDevolucaoSupPedido <= FaixaSup1, GanhoPercSup1,
+    If(PercDevolucaoSupPedido <= FaixaSup2, GanhoPercSup2,
+    If(PercDevolucaoSupPedido <= FaixaSup3, GanhoPercSup3,
+       GanhoPercSup4))) AS PercRepasseGanhoPedidoSup,
+
+    If(PercDevolucaoSupFaturado <= FaixaSup1, GanhoPercSup1,
+    If(PercDevolucaoSupFaturado <= FaixaSup2, GanhoPercSup2,
+    If(PercDevolucaoSupFaturado <= FaixaSup3, GanhoPercSup3,
+       GanhoPercSup4))) AS PercRepasseGanhoFaturadoSup
+
+RESIDENT TEMP_PERC_DEVOL_SUP;
+
+DROP TABLE TEMP_PERC_DEVOL_SUP;
+RENAME TABLE TEMP_PERC_DEVOL_SUP_FINAL TO TEMP_PERC_DEVOL_SUP;
+
+
+/*//////////////////////////////////////////////////////////////////////////
+
+    PARTE 5 - GANHO FINAL DO SUPERVISOR
+    Cada base (Pedido/Faturado) usa o seu proprio % de repasse, calculado
+    a partir do seu proprio % de devolucao - identico ao RCA.
+
+//////////////////////////////////////////////////////////////////////////*/
+TEMP_GANHOS_SUP:
+LOAD
+    CodSupervisor,
+    Sum(GanhoPedidoSup)   AS TotalGanhoPedidoSup,
+    Sum(GanhoFaturadoSup) AS TotalGanhoFaturadoSup
+RESIDENT BASE_SUP_INDICADORES_REALIZADO
+GROUP BY
+    CodSupervisor;
+
+LEFT JOIN (TEMP_GANHOS_SUP)
+LOAD * RESIDENT TEMP_PERC_DEVOL_SUP;
+
+DROP TABLE TEMP_PERC_DEVOL_SUP;
+
+GANHO_FINAL_SUP:
+NoConcatenate
+LOAD
+    *,
+    TotalGanhoPedidoSup   * PercRepasseGanhoPedidoSup   AS GanhoFinalPedidoSup,
+    TotalGanhoFaturadoSup * PercRepasseGanhoFaturadoSup AS GanhoFinalFaturadoSup
+RESIDENT TEMP_GANHOS_SUP;
+
+DROP TABLE TEMP_GANHOS_SUP;
+
+// GANHO_FINAL_SUP fica associada a BASE_SUP_INDICADORES_REALIZADO so por
+// CodSupervisor (mesmo padrao de GANHO_FINAL_RCA <-> BASE_RCA_INDICADORES_REALIZADO)
+// - e a base de premiacao final do supervisor, um registro por CodSupervisor.
+
+
 ///$tab Carregamento
 ///////////////////////////////////////////////////////////////////////////
 // CARREGAMENTO - TABELAS FINAIS DO MODELO DE DADOS
 // Camada só de organização/documentação - nenhuma tabela é gravada em
-// QVD aqui, nenhuma lógica é executada. As duas tabelas abaixo, já
+// QVD aqui, nenhuma lógica é executada. As tabelas abaixo, já
 // produzidas na aba Modelagem, permanecem residentes e são o que
 // efetivamente carrega no modelo de dados do app Qlik (associadas
-// entre si e com as demais tabelas via os campos em comum, ex: CodRca):
+// entre si e com as demais tabelas via os campos em comum, ex: CodRca,
+// CodSupervisor):
 //
 //   - BASE_RCA_INDICADORES_REALIZADO: Realizado + Meta + Ganho por
 //     RCA/Indicador/Data (grão: DATA + CodRca + Indicador).
 //   - PREMIACAO_GILLETTE_TRI: Realizado + ranking + prêmio da campanha
 //     Gillette Trimestral por RCA (grão: CodRca).
+//   - GANHO_FINAL_RCA: Total de ganho por RCA já com % de repasse por
+//     devolução aplicado (grão: CodRca).
+//   - BASE_SUP_INDICADORES_REALIZADO: Realizado + Meta + Ganho agregados
+//     por Supervisor/Indicador/Data (grão: DataSup + CodSupervisor +
+//     IndicadorSup) - liga com BASE_RCA_INDICADORES_REALIZADO só por
+//     CodSupervisor, de propósito (ver comentário no bloco de premiação
+//     do supervisor, na aba Modelagem).
+//   - GANHO_FINAL_SUP: Total de ganho por Supervisor já com % de
+//     repasse por devolução aplicado (grão: CodSupervisor) - mesma
+//     lógica de GANHO_FINAL_RCA, a nível de Supervisor.
 ///////////////////////////////////////////////////////////////////////////
 TRACE ==============================================;
 TRACE Carga do modelo de dados concluida.;
